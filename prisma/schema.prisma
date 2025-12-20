@@ -1,0 +1,581 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//
+// Enums
+//
+enum Language {
+  KO
+  EN
+  JA
+}
+
+enum UserRole {
+  PLANNER
+  DEV
+  DESIGN
+}
+
+enum TechLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum PositionType {
+  PLANNER
+  DEV
+  DESIGN
+}
+
+enum ProjectMode {
+  ONLINE
+  OFFLINE
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum ProjectStatus {
+  PLANNING
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELED
+}
+
+enum ApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELED
+}
+
+enum ChatRoomType {
+  PROJECT_GROUP
+  DIRECT
+}
+
+enum KanbanCardStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+//
+// Models
+//
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  nickname        String
+  profileImageUrl String?
+  bio             String?
+  primaryLanguage Language  @default(KO)
+  role            UserRole
+  githubUsername  String?
+  githubUrl       String?
+  githubCommits   Int?
+  githubRepoCount Int?
+  githubTopLangs  Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  techStacks         UserTechStack[]
+  ownedProjects      Project[]         @relation("ProjectOwner")
+  memberships        ProjectMember[]
+  sentInvitations    Invitation[]      @relation("InvitationInviter")
+  receivedInvitations Invitation[]     @relation("InvitationInvitee")
+  applications       Application[]
+  chatMessages       ChatMessage[]
+  chatRoomMembers    ChatRoomMember[]
+  evaluationsGiven   ProjectEvaluation[] @relation("EvaluationGiver")
+  evaluationsReceived ProjectEvaluation[] @relation("EvaluationReceiver")
+  badges             UserBadge[]
+
+  @@index([role])
+  @@index([primaryLanguage])
+}
+
+model TechStack {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  iconUrl   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users    UserTechStack[]
+  projects ProjectTechStack[]
+
+  @@index([name])
+}
+
+model UserTechStack {
+  id          String    @id @default(cuid())
+  userId      String
+  techStackId String
+  level       TechLevel @default(INTERMEDIATE)
+  years       Int?      // optional: 경력(년)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  techStack TechStack @relation(fields: [techStackId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, techStackId])
+  @@index([userId])
+  @@index([techStackId])
+}
+
+model Project {
+  id                 String        @id @default(cuid())
+  ownerId            String
+  originalLang       Language
+  titleOriginal      String
+  summaryOriginal    String
+  descriptionOriginal String
+  mode               ProjectMode   @default(ONLINE)
+  difficulty         Difficulty    @default(MEDIUM)
+  status             ProjectStatus @default(PLANNING)
+  capacity           Int           @default(1)
+  deadline           DateTime?
+  startDate          DateTime?
+  endDate            DateTime?
+  likeCount          Int           @default(0)
+  viewCount          Int           @default(0)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  owner         User               @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  i18n          ProjectI18n[]
+  techStacks    ProjectTechStack[]
+  positionNeeds ProjectPositionNeed[]
+  members       ProjectMember[]
+  invitations   Invitation[]
+  applications  Application[]
+  chatRoom      ChatRoom?
+  kanbanBoard   KanbanBoard?
+  successStories ProjectSuccessStory[]
+  evaluations   ProjectEvaluation[]
+
+  @@index([ownerId])
+  @@index([mode])
+  @@index([difficulty])
+  @@index([status])
+  @@index([deadline])
+  @@index([createdAt])
+}
+
+model ProjectI18n {
+  id          String   @id @default(cuid())
+  projectId   String
+  lang        Language
+  title       String
+  summary     String
+  description String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, lang])
+  @@index([projectId])
+  @@index([lang])
+}
+
+model ProjectTechStack {
+  id          String   @id @default(cuid())
+  projectId   String
+  techStackId String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  techStack TechStack @relation(fields: [techStackId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, techStackId])
+  @@index([projectId])
+  @@index([techStackId])
+}
+
+model ProjectPositionNeed {
+  id        String       @id @default(cuid())
+  projectId String
+  position  PositionType
+  headcount Int          @default(1)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, position])
+  @@index([projectId])
+  @@index([position])
+}
+
+model ProjectMember {
+  id           String   @id @default(cuid())
+  projectId    String
+  userId       String
+  roleInProject String?
+  joinedAt     DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+}
+
+model Invitation {
+  id        String       @id @default(cuid())
+  projectId String
+  inviterId String
+  inviteeId String
+  status    InviteStatus @default(PENDING)
+  message   String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  inviter User    @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee User    @relation("InvitationInvitee", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  // 다국어 초대 알림/메일 컨텐츠 (미리 저장)
+  notifications Notification[]
+
+  @@unique([projectId, inviteeId])
+  @@index([projectId])
+  @@index([inviterId])
+  @@index([inviteeId])
+  @@index([status])
+}
+
+model Application {
+  id          String            @id @default(cuid())
+  projectId   String
+  applicantId String
+  status      ApplicationStatus @default(PENDING)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  applicant User    @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, applicantId])
+  @@index([projectId])
+  @@index([applicantId])
+  @@index([status])
+}
+
+//
+// Notifications (초대/지원/프로젝트 관련 알림: 미리 번역 저장 가능)
+//
+model Notification {
+  id           String   @id @default(cuid())
+  userId       String
+  invitationId String?  // 초대 기반 알림이면 연결
+  type         String   // "INVITE", "INVITE_STATUS", "PROJECT_UPDATE" 등 (초기엔 String)
+  isRead       Boolean  @default(false)
+
+  // 원문 + i18n (조회 시 번역 금지)
+  originalLang Language
+  titleOriginal String
+  bodyOriginal  String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invitation Invitation? @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  i18n       NotificationI18n[]
+
+  @@index([userId])
+  @@index([invitationId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model NotificationI18n {
+  id             String   @id @default(cuid())
+  notificationId String
+  lang           Language
+  title          String
+  body           String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, lang])
+  @@index([notificationId])
+  @@index([lang])
+}
+
+//
+// Chat (프로젝트 그룹 + 1:1 모두 지원)
+//
+model ChatRoom {
+  id        String       @id @default(cuid())
+  type      ChatRoomType @default(PROJECT_GROUP)
+
+  // 프로젝트 그룹 채팅이면 projectId 사용 (프로젝트당 1개)
+  projectId String?      @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  members ChatRoomMember[]
+  messages ChatMessage[]
+
+  @@index([type])
+}
+
+model ChatRoomMember {
+  id        String   @id @default(cuid())
+  roomId    String
+  userId    String
+  joinedAt  DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  room ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@index([userId])
+}
+
+model ChatMessage {
+  id           String   @id @default(cuid())
+  roomId       String
+  senderId     String
+  originalText String
+  originalLang Language
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  i18n   ChatMessageI18n[]
+
+  @@index([roomId])
+  @@index([senderId])
+  @@index([createdAt])
+}
+
+model ChatMessageI18n {
+  id            String   @id @default(cuid())
+  messageId     String
+  targetLang    Language
+  translatedText String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  message ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, targetLang])
+  @@index([messageId])
+  @@index([targetLang])
+}
+
+//
+// 프로젝트 팀 구성 즉시 자동 생성되는 구조
+//
+model KanbanBoard {
+  id        String   @id @default(cuid())
+  projectId String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  columns KanbanColumn[]
+}
+
+model KanbanColumn {
+  id        String   @id @default(cuid())
+  boardId   String
+  title     String
+  position  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  board KanbanBoard  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards KanbanCard[]
+
+  @@unique([boardId, position])
+  @@index([boardId])
+}
+
+model KanbanCard {
+  id          String           @id @default(cuid())
+  columnId    String
+  title       String
+  description String?
+  status      KanbanCardStatus @default(TODO)
+  dueDate     DateTime?
+  position    Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  column    KanbanColumn        @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  assignees KanbanCardAssignee[]
+
+  @@unique([columnId, position])
+  @@index([columnId])
+  @@index([status])
+}
+
+model KanbanCardAssignee {
+  id      String @id @default(cuid())
+  cardId  String
+  userId  String
+
+  card KanbanCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  user User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([cardId, userId])
+  @@index([cardId])
+  @@index([userId])
+}
+
+//
+// Project Evaluation / Trust (문서: "프로젝트 종료 후 팀원 간 평가 점수 및 배지")
+// 
+model ProjectEvaluation {
+  id            String   @id @default(cuid())
+  projectId     String
+  evaluatorId   String
+  evaluateeId   String
+  diligence     Int      // 1~5
+  communication Int      // 1~5
+  contribution  Int      // 1~5
+  comment       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  evaluator User    @relation("EvaluationGiver", fields: [evaluatorId], references: [id], onDelete: Cascade)
+  evaluatee User    @relation("EvaluationReceiver", fields: [evaluateeId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, evaluatorId, evaluateeId])
+  @@index([projectId])
+  @@index([evaluatorId])
+  @@index([evaluateeId])
+}
+
+model Badge {
+  id        String   @id @default(cuid())
+  code      String   @unique // 예: "GOOD_COMMUNICATION"
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users UserBadge[]
+}
+
+model UserBadge {
+  id        String   @id @default(cuid())
+  userId    String
+  badgeId   String
+  reason    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badge Badge @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, badgeId])
+  @@index([userId])
+  @@index([badgeId])
+}
+
+//
+// Trends + Success Stories (문서: 트렌드 요약 + 프로젝트 성공 후기)
+//
+model TrendArticle {
+  id             String   @id @default(cuid())
+  originalLang   Language
+  titleOriginal  String
+  summaryOriginal String
+  sourceName     String
+  sourceUrl      String   @unique
+  publishedAt    DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  i18n TrendArticleI18n[]
+
+  @@index([publishedAt])
+  @@index([originalLang])
+}
+
+model TrendArticleI18n {
+  id        String   @id @default(cuid())
+  articleId String
+  lang      Language
+  title     String
+  summary   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  article TrendArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, lang])
+  @@index([articleId])
+  @@index([lang])
+}
+
+model ProjectSuccessStory {
+  id        String   @id @default(cuid())
+  projectId String
+  originalLang Language
+  titleOriginal String
+  contentOriginal String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  i18n    ProjectSuccessStoryI18n[]
+
+  @@index([projectId])
+}
+
+model ProjectSuccessStoryI18n {
+  id        String   @id @default(cuid())
+  storyId   String
+  lang      Language
+  title     String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  story ProjectSuccessStory @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, lang])
+  @@index([storyId])
+  @@index([lang])
+}
