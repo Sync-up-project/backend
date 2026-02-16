@@ -1,0 +1,103 @@
+{
+  "schema_version": "1.0",
+  "project_meta": {
+    "title": "Sync-up 협업 플랫폼",
+    "one_liner": "아이디어부터 개발 진행까지 관리하는 협업 플랫폼",
+    "domain": "collaboration",
+    "target_platforms": ["web"],
+    "primary_language": "ko",
+    "reference_links": []
+  },
+  "problem_solution": {
+    "problem_statement": "개발 프로젝트에서 기획 산출물과 진행 상황이 분산되어 관리가 어렵다.",
+    "solution_summary": "AI를 통해 기획 산출물을 자동 생성하고, 프로젝트 진행을 하나의 공간에서 관리한다.",
+    "unique_value": [
+      "AI 기반 기획 산출물 자동 생성",
+      "프로젝트 난이도 분석",
+      "역할 기반 협업 구조"
+    ]
+  },
+  "users_and_roles": [
+    {
+      "role": "guest",
+      "description": "프로젝트를 탐색하고 열람하는 사용자",
+      "key_permissions": ["browse_projects"]
+    },
+    {
+      "role": "member",
+      "description": "프로젝트에 참여하여 작업을 수행하는 사용자",
+      "key_permissions": ["join_project", "update_task", "comment"]
+    },
+    {
+      "role": "admin",
+      "description": "프로젝트를 생성하고 관리하는 사용자",
+      "key_permissions": ["create_project", "manage_members", "edit_project"]
+    }
+  ],
+  "core_user_flows": [
+    {
+      "name": "프로젝트 생성",
+      "actor_role": "admin",
+      "steps": [
+        "아이디어 입력",
+        "AI 산출물 생성",
+        "산출물 검토 및 수정",
+        "프로젝트 생성 확정"
+      ]
+    },
+    {
+      "name": "프로젝트 참여",
+      "actor_role": "member",
+      "steps": ["프로젝트 탐색", "참여 요청", "승인", "작업 시작"]
+    }
+  ],
+  "features": [
+    {
+      "name": "AI 프로젝트 초안 생성",
+      "description": "아이디어를 입력하면 화면, API, ERD 초안을 생성한다.",
+      "priority": "must",
+      "complexity_triggers": ["auth", "admin_console"],
+      "acceptance_criteria": [
+        "모든 산출물은 JSON 형태로 제공된다.",
+        "산출물은 수정 및 재생성이 가능하다."
+      ]
+    },
+    {
+      "name": "프로젝트 진행 관리",
+      "description": "칸반 보드와 상태 기반으로 프로젝트 진행을 관리한다.",
+      "priority": "should",
+      "complexity_triggers": ["realtime", "notifications"],
+      "acceptance_criteria": [
+        "작업 상태 변경이 즉시 반영된다.",
+        "참여자에게 알림이 전달된다."
+      ]
+    }
+  ],
+  "data_sensitivity": {
+    "contains_pii": "unknown",
+    "contains_payment_data": "no",
+    "notes": ""
+  },
+  "non_functional_requirements": {
+    "security": ["GitHub OAuth 기반 로그인"],
+    "performance": ["AI 호출 결과는 캐싱한다"],
+    "availability": [],
+    "scalability": []
+  },
+  "assumptions": [
+    "초기 버전은 웹 환경만 지원한다.",
+    "로그인은 OAuth 기반으로 제공된다."
+  ],
+  "constraints": {
+    "deadline": null,
+    "team_size_limit": null,
+    "must_use_tech": [],
+    "cannot_use_tech": []
+  },
+  "open_questions": [],
+  "quality_flags": {
+    "missing_role_definitions": "no",
+    "ambiguous_scope": "no",
+    "high_risk_uncertainty": "no"
+  }
+}

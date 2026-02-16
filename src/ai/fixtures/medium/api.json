@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "base_url_hint": "/api",
+  "auth": {
+    "strategy": "oauth",
+    "notes": ["GitHub OAuth 사용"]
+  },
+  "endpoints": [
+    {
+      "id": "E1",
+      "name": "Generate Project Draft",
+      "method": "POST",
+      "path": "/api/ai/project/generate",
+      "summary": "아이디어 기반 프로젝트 초안을 생성한다",
+      "auth_required": "yes",
+      "roles_allowed": ["admin"],
+      "rate_limit_hint": "10/min",
+      "request": {
+        "headers": [
+          {
+            "name": "Authorization",
+            "required": "yes",
+            "example": "Bearer <token>"
+          }
+        ],
+        "query": [],
+        "params": [],
+        "body": {
+          "content_type": "application/json",
+          "schema": "object",
+          "example": {
+            "ideaText": "협업 프로젝트 관리 서비스",
+            "language": "KO"
+          }
+        }
+      },
+      "responses": [
+        {
+          "status": 200,
+          "description": "프로젝트 초안 생성 성공",
+          "schema": "object",
+          "example": {}
+        }
+      ],
+      "errors": [
+        {
+          "status": 400,
+          "code": "INVALID_INPUT",
+          "message": "입력값이 올바르지 않습니다.",
+          "when": "ideaText가 비어있을 때"
+        }
+      ],
+      "related_screens": ["S1"],
+      "notes": []
+    }
+  ],
+  "assumptions": [],
+  "open_questions": []
+}

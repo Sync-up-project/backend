@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.0",
+  "screens": [
+    {
+      "id": "S1",
+      "name": "프로젝트 생성",
+      "route": "/projects/new",
+      "actor_roles": ["admin"],
+      "goal": "새 프로젝트를 생성한다",
+      "main_components": ["IdeaInput", "GenerateButton", "DraftPreview"],
+      "states": ["loading", "success", "error"],
+      "required_apis": [
+        {
+          "method": "POST",
+          "path": "/api/ai/project/generate",
+          "purpose": "AI 프로젝트 초안 생성"
+        }
+      ],
+      "permissions": {
+        "auth_required": "yes",
+        "roles_allowed": ["admin"]
+      },
+      "notes": []
+    },
+    {
+      "id": "S2",
+      "name": "프로젝트 상세",
+      "route": "/projects/:id",
+      "actor_roles": ["guest", "member", "admin"],
+      "goal": "프로젝트 정보를 확인한다",
+      "main_components": ["ProjectOverview", "KanbanBoard", "ChatPanel"],
+      "states": ["loading", "success", "error"],
+      "required_apis": [
+        {
+          "method": "GET",
+          "path": "/api/projects/:id",
+          "purpose": "프로젝트 조회"
+        }
+      ],
+      "permissions": {
+        "auth_required": "no",
+        "roles_allowed": []
+      },
+      "notes": []
+    }
+  ],
+  "navigation": [
+    {
+      "from_screen_id": "S1",
+      "to_screen_id": "S2",
+      "trigger": "프로젝트 생성 완료"
+    }
+  ],
+  "assumptions": [],
+  "open_questions": []
+}

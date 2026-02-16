@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "로그인은 GitHub OAuth만 사용할까요?",
+      "type": "single_choice",
+      "options": ["GitHub only", "GitHub + Email"],
+      "default": "GitHub only",
+      "why_it_matters": "인증 구조와 사용자 관리 방식에 영향을 줍니다.",
+      "impacts": ["api", "team"]
+    },
+    {
+      "id": "Q2",
+      "question": "프로젝트당 Git 저장소는 하나로 제한할까요?",
+      "type": "single_choice",
+      "options": ["1개", "여러 개"],
+      "default": "1개",
+      "why_it_matters": "레포 연동과 권한 설계에 영향을 줍니다.",
+      "impacts": ["api", "timeline"]
+    }
+  ],
+  "limit_policy": {
+    "max_questions": 5,
+    "rule": "최대 5개까지 생성"
+  }
+}

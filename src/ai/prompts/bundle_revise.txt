@@ -1,0 +1,11 @@
+JSON만 출력. 설명/주석/마크다운 금지.
+최상위 키는 정확히 다음 5개:
+ideaNormalized, screens, apiSpec, erd, questions
+각 값은 JSON 객체/배열이어야 하며 문자열로 감싸지 마라.
+
+언어: {{language}}
+수정 지시: {{instruction}}
+
+아래 기존 JSON을 기준으로 수정 지시를 반영해 전체 번들을 다시 출력해라.
+기존 JSON:
+{{baseJson}}

@@ -1,0 +1,95 @@
+{
+  "schema_version": "1.0",
+  "entities": [
+    {
+      "name": "User",
+      "description": "사용자",
+      "columns": [
+        {
+          "name": "id",
+          "type": "cuid",
+          "nullable": "no",
+          "pk": "yes",
+          "unique": "yes",
+          "default": null,
+          "comment": ""
+        },
+        {
+          "name": "email",
+          "type": "string",
+          "nullable": "no",
+          "pk": "no",
+          "unique": "yes",
+          "default": null,
+          "comment": ""
+        },
+        {
+          "name": "createdAt",
+          "type": "datetime",
+          "nullable": "no",
+          "pk": "no",
+          "unique": "no",
+          "default": "now()",
+          "comment": ""
+        }
+      ],
+      "indexes": [
+        { "name": "idx_user_email", "columns": ["email"], "unique": "yes" }
+      ]
+    },
+    {
+      "name": "Project",
+      "description": "프로젝트",
+      "columns": [
+        {
+          "name": "id",
+          "type": "cuid",
+          "nullable": "no",
+          "pk": "yes",
+          "unique": "yes",
+          "default": null,
+          "comment": ""
+        },
+        {
+          "name": "ownerId",
+          "type": "cuid",
+          "nullable": "no",
+          "pk": "no",
+          "unique": "no",
+          "default": null,
+          "comment": ""
+        },
+        {
+          "name": "title",
+          "type": "string",
+          "nullable": "no",
+          "pk": "no",
+          "unique": "no",
+          "default": null,
+          "comment": ""
+        }
+      ],
+      "indexes": [
+        { "name": "idx_project_owner", "columns": ["ownerId"], "unique": "no" }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "from_entity": "Project",
+      "from_column": "ownerId",
+      "to_entity": "User",
+      "to_column": "id",
+      "cardinality": "1:N",
+      "on_delete": "CASCADE",
+      "notes": ""
+    }
+  ],
+  "common_conventions": {
+    "id_strategy": "cuid",
+    "timestamps": "createdAt/updatedAt",
+    "soft_delete": "unknown"
+  },
+  "assumptions": [],
+  "open_questions": []
+}
