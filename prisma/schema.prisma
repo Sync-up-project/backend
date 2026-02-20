@@ -6,7 +6,6 @@ datasource db {
   provider = "postgresql"
 }
 
-
 //
 // Enums
 //
@@ -117,17 +116,39 @@ enum AuditAction {
 }
 
 //
+// ✅ 추가: 서비스 권한(인증/인가)용 Role
+// 기존 UserRole(PLANNER/DEV/DESIGN)은 "포지션" 성격이라 그대로 두고,
+// 로그인/권한 분리를 위해 별도 enum을 추가합니다.
+//
+enum AccountRole {
+  USER
+  ADMIN
+}
+
+//
 // Models
 //
 model User {
   id              String    @id @default(cuid())
-  email           String    @unique
-  passwordHash    String
-  nickname        String
+
+  // ✅ GitHub OAuth에서는 email이 없을 수 있어 nullable 권장
+  // (GitHub email 비공개, 또는 scope/설정에 따라 제공되지 않을 수 있음)
+  email           String?   @unique
+
+  // ✅ OAuth 가입 유저는 password가 없으므로 nullable
+  passwordHash    String?
+
+  nickname        String?
   profileImageUrl String?
   bio             String?
   primaryLanguage Language  @default(KO)
-  role            UserRole
+
+  // 기존 포지션(PLANNER/DEV/DESIGN) 필드는 유지 (nullable 권장: 가입 직후 미정 가능)
+  role            UserRole?
+
+  // ✅ 인증/인가용 서비스 역할(권한)
+  accountRole     AccountRole @default(USER)
+
   githubUsername  String?
   githubUrl       String?
   githubCommits   Int?
@@ -150,8 +171,11 @@ model User {
   notifications         Notification[]
   kanbanCardAssignments KanbanCardAssignee[]
 
-  // ✅ 추가: OAuth 연동 계정/토큰 관리
-  oauthAccounts         OAuthAccount[]
+  // ✅ OAuth 연동 계정/토큰 관리
+  oauthAccounts          OAuthAccount[]
+
+  // ✅ Refresh 세션(쿠키 기반 refresh 토큰을 DB에서 폐기/관리하기 위함)
+  refreshSessions        RefreshSession[]
 
   // ✅ 추가: 캘린더/시간추적
   calendarEventAssignees ProjectCalendarEventAssignee[]
@@ -159,12 +183,13 @@ model User {
   timeEntries            TimeEntry[]
 
   // ✅ 추가: AI 산출물/요약/감사로그(행위자)
-  aiArtifactsCreated     AiArtifact[]    @relation("AiArtifactCreator")
-  summariesCreated       ProjectSummary[] @relation("ProjectSummaryCreator")
-  auditLogs              AuditLog[]      @relation("AuditActor")
+  aiArtifactsCreated     AiArtifact[]      @relation("AiArtifactCreator")
+  summariesCreated       ProjectSummary[]  @relation("ProjectSummaryCreator")
+  auditLogs              AuditLog[]        @relation("AuditActor")
 
   @@index([role])
   @@index([primaryLanguage])
+  @@index([accountRole])
 }
 
 model TechStack {
@@ -505,7 +530,7 @@ model KanbanCard {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  column    KanbanColumn        @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  column    KanbanColumn         @relation(fields: [columnId], references: [id], onDelete: Cascade)
   assignees KanbanCardAssignee[]
 
   // ✅ 추가: 시간추적(TimeEntry)에서 연결 가능
@@ -517,9 +542,9 @@ model KanbanCard {
 }
 
 model KanbanCardAssignee {
-  id      String @id @default(cuid())
-  cardId  String
-  userId  String
+  id     String @id @default(cuid())
+  cardId String
+  userId String
 
   card KanbanCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
   user User       @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -653,17 +678,21 @@ model ProjectSuccessStoryI18n {
 
 // GitHub 등 OAuth 연동 정보(토큰/스코프/만료 등)
 model OAuthAccount {
-  id             String       @id @default(cuid())
-  userId         String
-  provider       AuthProvider
-  providerUserId String
-  scope          String?
-  accessTokenEnc String?      // 암호화해서 저장(권장)
+  id              String       @id @default(cuid())
+  userId          String
+  provider        AuthProvider
+  providerUserId  String
+
+  // GitHub login(username)
+  username        String?
+
+  scope           String?
+  accessTokenEnc  String?      // 암호화해서 저장(권장)
   refreshTokenEnc String?
-  expiresAt      DateTime?
-  revokedAt      DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -672,22 +701,40 @@ model OAuthAccount {
   @@index([provider])
 }
 
+// ✅ Refresh Token 세션(쿠키 기반 refresh 토큰을 서버에서 폐기/추적하기 위한 테이블)
+model RefreshSession {
+  id               String   @id @default(cuid())
+  userId           String
+  refreshTokenHash String
+  expiresAt        DateTime
+
+  userAgent        String?
+  ip               String?
+
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
 // 프로젝트와 연결된 레포(생성/초대 자동화에 필요)
 model ProjectRepository {
-  id            String      @id @default(cuid())
-  projectId     String
-  provider      RepoProvider @default(GITHUB)
-  owner         String
-  repoName      String
-  repoUrl       String
-  defaultBranch String?     @default("main")
+  id             String       @id @default(cuid())
+  projectId      String
+  provider       RepoProvider @default(GITHUB)
+  owner          String
+  repoName       String
+  repoUrl        String
+  defaultBranch  String?      @default("main")
 
   // GitHub App 방식 사용 시 유용 (선택)
-  installationId String?
+  installationId  String?
   createdByUserId String?
 
-  createdAt      DateTime    @default(now())
-  updatedAt      DateTime    @updatedAt
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
@@ -737,22 +784,22 @@ model ProjectCalendarEventAssignee {
 
 // 작업 시간 추적
 model TimeEntry {
-  id            String   @id @default(cuid())
-  projectId      String
-  userId         String
-  startAt        DateTime
-  endAt          DateTime
-  durationMinutes Int
+  id              String   @id @default(cuid())
+  projectId        String
+  userId           String
+  startAt          DateTime
+  endAt            DateTime
+  durationMinutes  Int
 
   // 선택: 칸반 카드와 연결
-  kanbanCardId   String?
+  kanbanCardId     String?
 
-  note           String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  note             String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   kanbanCard KanbanCard? @relation(fields: [kanbanCardId], references: [id], onDelete: SetNull)
 
   @@index([projectId])
@@ -762,25 +809,25 @@ model TimeEntry {
 
 // AI 산출물(기획서/ERD/API/화면목록 등) 버전 관리
 model AiArtifact {
-  id          String        @id @default(cuid())
-  projectId   String?
-  type        AiArtifactType
-  version     Int           @default(1)
-  title       String?
-  contentJson Json
+  id             String        @id @default(cuid())
+  projectId       String?
+  type           AiArtifactType
+  version        Int           @default(1)
+  title          String?
+  contentJson    Json
   revisionBaseId String?
-  createdById String?
+  createdById    String?
 
   // 추적용 메타데이터(권장)
-  modelName   String?
-  promptHash  String?
-  tokenUsage  Json?
+  modelName      String?
+  promptHash     String?
+  tokenUsage     Json?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   project   Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy User?   @relation("AiArtifactCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy User?    @relation("AiArtifactCreator", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([projectId])
   @@index([type])
@@ -790,19 +837,19 @@ model AiArtifact {
 
 // 프로젝트 요약/결정/액션아이템 저장(주간 요약 등)
 model ProjectSummary {
-  id            String        @id @default(cuid())
-  projectId      String
-  source         SummarySource @default(CHAT)
+  id              String        @id @default(cuid())
+  projectId        String
+  source           SummarySource @default(CHAT)
 
-  periodStart    DateTime?
-  periodEnd      DateTime?
+  periodStart      DateTime?
+  periodEnd        DateTime?
 
-  summaryText    String
-  actionItemsJson Json?
+  summaryText      String
+  actionItemsJson  Json?
 
-  createdById    String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdById      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   createdBy User?   @relation("ProjectSummaryCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -814,17 +861,17 @@ model ProjectSummary {
 
 // 감사 로그(누가 무엇을 바꿨는지)
 model AuditLog {
-  id          String      @id @default(cuid())
-  projectId   String?
-  actorId     String?
+  id         String      @id @default(cuid())
+  projectId  String?
+  actorId    String?
 
-  action      AuditAction
-  entityType  String      // "Project", "KanbanCard", "Invitation" ...
-  entityId    String?     // 대상 id
-  summary     String?     // 사람이 읽을 한 줄
-  diffJson    Json?       // before/after 등
+  action     AuditAction
+  entityType String      // "Project", "KanbanCard", "Invitation" ...
+  entityId   String?     // 대상 id
+  summary    String?     // 사람이 읽을 한 줄
+  diffJson   Json?       // before/after 등
 
-  createdAt   DateTime @default(now())
+  createdAt  DateTime @default(now())
 
   project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
   actor   User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)

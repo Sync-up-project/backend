@@ -1,17 +1,21 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import * as cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // CORS 설정
+  // ✅ Cookie 파싱 (refresh_token 등 HttpOnly 쿠키 사용을 위해 필요)
+  app.use(cookieParser());
+
+  // ✅ CORS 설정 (쿠키 포함 요청을 위해 credentials: true 필수)
   app.enableCors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     credentials: true,
   });
 
-  // Swagger 설정 (로컬에서만 켜기: SWAGGER=true 일 때만)
+  // ✅ Swagger 설정 (SWAGGER=true 일 때만)
   if (process.env.SWAGGER === 'true') {
     const config = new DocumentBuilder()
       .setTitle('SyncUp API')
@@ -27,7 +31,7 @@ async function bootstrap() {
     SwaggerModule.setup('swagger', app, document); // http://localhost:<port>/swagger
   }
 
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);
 
   console.log(`Application is running on: http://localhost:${port}`);
@@ -35,4 +39,5 @@ async function bootstrap() {
     console.log(`Swagger is running on: http://localhost:${port}/swagger`);
   }
 }
+
 bootstrap();
