@@ -1,3 +1,13 @@
+import path from "path";
+import dotenv from "dotenv";
+
+// .env 파일 경로 설정 (backend 폴더 기준 상위 폴더)
+const envPath = path.resolve(process.cwd(), "../.env");
+dotenv.config({
+  path: envPath,
+  override: true, // 기존 환경 변수를 덮어씀
+});
+
 import {
   PrismaClient,
   Language,
@@ -26,19 +36,27 @@ const hashPassword = async (password: string): Promise<string> => {
   }
 };
 
-/**
- * ✅ 중요: 이 프로젝트는 Prisma Driver Adapter 방식(engine type "client")을 사용 중이라
- * PrismaClient 생성 시 adapter(또는 accelerateUrl)가 반드시 필요합니다.
- *
- * Nest 서버에서는 PrismaService에서 adapter를 주입해서 동작하고,
- * seed.ts는 직접 adapter를 만들어 주입해야 합니다.
- */
+// ✅ 로컬 실행용: DATABASE_URL의 호스트를 localhost로 변경
+if (process.env.DATABASE_URL) {
+  // Docker 호스트명 'db'를 로컬 호스트 'localhost'로 변경
+  if (process.env.DATABASE_URL.includes("@db:")) {
+    process.env.DATABASE_URL = process.env.DATABASE_URL.replace("@db:", "@localhost:");
+  }
+  // schema=public이 없으면 추가
+  if (!process.env.DATABASE_URL.includes("schema=")) {
+    process.env.DATABASE_URL += (process.env.DATABASE_URL.includes("?") ? "&" : "?") + "schema=public";
+  }
+} else {
+  throw new Error("DATABASE_URL이 설정되지 않았습니다. .env 파일을 확인해주세요.");
+}
+
+console.log("🔗 DATABASE_URL:", process.env.DATABASE_URL.replace(/:[^:@]+@/, ":****@"));
+
+// ✅ PrismaPg 어댑터 사용 (prisma.service.ts와 동일한 방식)
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 const adapter = new PrismaPg(pool);
-
-// ✅ 여기에서 adapter를 주입합니다.
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
@@ -461,8 +479,8 @@ async function main() {
           type: ChatRoomType.PROJECT_GROUP,
           projectId: project.id,
         },
-      })
-    )
+      }),
+    ),
   );
 
   console.log("👥 채팅방 멤버 생성 중...");
@@ -539,8 +557,8 @@ async function main() {
         data: {
           projectId: project.id,
         },
-      })
-    )
+      }),
+    ),
   );
 
   console.log("📊 칸반 컬럼 생성 중...");
@@ -754,5 +772,4 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
-    await pool.end();
   });
