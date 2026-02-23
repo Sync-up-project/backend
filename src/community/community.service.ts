@@ -30,9 +30,6 @@ export interface CreateCommentDto {
 export class CommunityService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * 게시글 생성
-   */
   async createPost(dto: CreatePostDto) {
     if (!dto.authorId) throw new BadRequestException('authorId가 필요합니다.');
     if (!dto.titleOriginal?.trim()) throw new BadRequestException('titleOriginal이 필요합니다.');
@@ -75,9 +72,6 @@ export class CommunityService {
     return post;
   }
 
-  /**
-   * 게시글 목록 조회
-   */
   async findAllPosts(
     category?: PostCategory,
     limit: number = 20,
@@ -129,7 +123,6 @@ export class CommunityService {
       this.prisma.communityPost.count({ where }),
     ]);
 
-    // 필요한 필드만 매핑
     const mappedPosts = posts.map((post) => ({
       id: post.id,
       category: post.category,
@@ -139,7 +132,7 @@ export class CommunityService {
       commentCount: post.commentCount,
       likeCount: post.likeCount,
       viewCount: post.viewCount,
-      i18n: post.i18n, // 프론트에서 언어별 제목 선택용
+      i18n: post.i18n,
     }));
 
     return {
@@ -150,9 +143,6 @@ export class CommunityService {
     };
   }
 
-  /**
-   * 게시글 상세 조회
-   */
   async findOnePost(id: string) {
     const post = await this.prisma.communityPost.findUnique({
       where: { id },
@@ -210,7 +200,6 @@ export class CommunityService {
       throw new NotFoundException('게시글을 찾을 수 없습니다.');
     }
 
-    // 조회수 증가
     await this.prisma.communityPost.update({
       where: { id },
       data: { viewCount: { increment: 1 } },
@@ -222,9 +211,6 @@ export class CommunityService {
     };
   }
 
-  /**
-   * 게시글 수정
-   */
   async updatePost(id: string, dto: UpdatePostDto) {
     const post = await this.prisma.communityPost.findUnique({
       where: { id },
@@ -261,7 +247,6 @@ export class CommunityService {
       },
     });
 
-    // i18n도 업데이트
     if (dto.titleOriginal || dto.contentOriginal) {
       await this.prisma.postI18n.upsert({
         where: {
@@ -286,9 +271,6 @@ export class CommunityService {
     return updated;
   }
 
-  /**
-   * 게시글 삭제
-   */
   async removePost(id: string) {
     const post = await this.prisma.communityPost.findUnique({
       where: { id },
@@ -305,15 +287,11 @@ export class CommunityService {
     return { message: '게시글이 삭제되었습니다.' };
   }
 
-  /**
-   * 댓글 생성
-   */
   async createComment(dto: CreateCommentDto) {
     if (!dto.postId) throw new BadRequestException('postId가 필요합니다.');
     if (!dto.authorId) throw new BadRequestException('authorId가 필요합니다.');
     if (!dto.contentOriginal?.trim()) throw new BadRequestException('contentOriginal이 필요합니다.');
 
-    // 게시글 존재 확인
     const post = await this.prisma.communityPost.findUnique({
       where: { id: dto.postId },
     });
@@ -348,7 +326,6 @@ export class CommunityService {
       },
     });
 
-    // 게시글 댓글 수 증가
     await this.prisma.communityPost.update({
       where: { id: dto.postId },
       data: { commentCount: { increment: 1 } },
@@ -357,9 +334,6 @@ export class CommunityService {
     return comment;
   }
 
-  /**
-   * 댓글 삭제
-   */
   async removeComment(id: string) {
     const comment = await this.prisma.postComment.findUnique({
       where: { id },
@@ -376,7 +350,6 @@ export class CommunityService {
       where: { id },
     });
 
-    // 게시글 댓글 수 감소
     await this.prisma.communityPost.update({
       where: { id: comment.postId },
       data: { commentCount: { decrement: 1 } },
@@ -385,9 +358,6 @@ export class CommunityService {
     return { message: '댓글이 삭제되었습니다.' };
   }
 
-  /**
-   * 게시글 좋아요
-   */
   async togglePostLike(postId: string, userId: string) {
     const existing = await this.prisma.postLike.findUnique({
       where: {
@@ -399,7 +369,6 @@ export class CommunityService {
     });
 
     if (existing) {
-      // 좋아요 취소
       await this.prisma.postLike.delete({
         where: {
           postId_userId: {
@@ -416,7 +385,6 @@ export class CommunityService {
 
       return { liked: false };
     } else {
-      // 좋아요 추가
       await this.prisma.postLike.create({
         data: {
           postId,

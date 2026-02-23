@@ -20,9 +20,6 @@ export interface UpdateNoticeDto {
 export class NoticeService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * 공지사항 생성
-   */
   async create(dto: CreateNoticeDto) {
     if (!dto.authorId) throw new BadRequestException('authorId가 필요합니다.');
     if (!dto.titleOriginal?.trim()) throw new BadRequestException('titleOriginal이 필요합니다.');
@@ -58,9 +55,6 @@ export class NoticeService {
     return notice;
   }
 
-  /**
-   * 공지사항 목록 조회
-   */
   async findAll(limit: number = 20, offset: number = 0) {
     const [notices, total] = await Promise.all([
       this.prisma.notice.findMany({
@@ -94,7 +88,6 @@ export class NoticeService {
       this.prisma.notice.count(),
     ]);
 
-    // 필요한 필드만 매핑
     const mappedNotices = notices.map((notice) => ({
       id: notice.id,
       pinned: notice.pinned,
@@ -102,7 +95,7 @@ export class NoticeService {
       authorNickname: notice.author.nickname,
       createdAt: notice.createdAt,
       viewCount: notice.viewCount,
-      i18n: notice.i18n, // 프론트에서 언어별 제목 선택용
+      i18n: notice.i18n,
     }));
 
     return {
@@ -113,9 +106,6 @@ export class NoticeService {
     };
   }
 
-  /**
-   * 공지사항 상세 조회
-   */
   async findOne(id: string) {
     const notice = await this.prisma.notice.findUnique({
       where: { id },
@@ -135,7 +125,6 @@ export class NoticeService {
       throw new NotFoundException('공지사항을 찾을 수 없습니다.');
     }
 
-    // 조회수 증가
     await this.prisma.notice.update({
       where: { id },
       data: { viewCount: { increment: 1 } },
@@ -147,9 +136,6 @@ export class NoticeService {
     };
   }
 
-  /**
-   * 공지사항 수정
-   */
   async update(id: string, dto: UpdateNoticeDto) {
     const notice = await this.prisma.notice.findUnique({
       where: { id },
@@ -179,7 +165,6 @@ export class NoticeService {
       },
     });
 
-    // i18n도 업데이트 (원본 언어만)
     if (dto.titleOriginal || dto.contentOriginal) {
       await this.prisma.noticeI18n.upsert({
         where: {
@@ -204,9 +189,6 @@ export class NoticeService {
     return updated;
   }
 
-  /**
-   * 공지사항 삭제
-   */
   async remove(id: string) {
     const notice = await this.prisma.notice.findUnique({
       where: { id },
