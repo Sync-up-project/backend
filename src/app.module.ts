@@ -13,6 +13,8 @@ import { ChatModule } from './chat/chat.module';
 import { ProjectModule } from './project/project.module';
 import { AiModule } from './ai/ai.module';
 import { KanbanModule } from './kanban/kanban.module';
+import { NoticeModule } from './notice/notice.module';
+import { CommunityModule } from './community/community.module';
 
 @Module({
   imports: [
@@ -33,6 +35,10 @@ import { KanbanModule } from './kanban/kanban.module';
     ProjectModule,
     AiModule,
     KanbanModule,
+
+    // ✅ 공지사항/커뮤니티
+    NoticeModule,
+    CommunityModule,
   ],
   controllers: [AppController],
   providers: [AppService],
