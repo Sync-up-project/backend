@@ -187,6 +187,13 @@ model User {
   summariesCreated       ProjectSummary[]  @relation("ProjectSummaryCreator")
   auditLogs              AuditLog[]        @relation("AuditActor")
 
+  // ✅ 추가: 공지사항/커뮤니티
+  notices                Notice[]          @relation("NoticeAuthor")
+  communityPosts         CommunityPost[]   @relation("PostAuthor")
+  postComments           PostComment[]     @relation("CommentAuthor")
+  postLikes              PostLike[]       @relation("PostLikeUser")
+  commentLikes           CommentLike[]     @relation("CommentLikeUser")
+
   @@index([role])
   @@index([primaryLanguage])
   @@index([accountRole])
@@ -880,4 +887,161 @@ model AuditLog {
   @@index([actorId])
   @@index([entityType])
   @@index([createdAt])
+}
+
+//
+// ✅ 공지사항 (Notice)
+//
+model Notice {
+  id              String   @id @default(cuid())
+  authorId        String
+  originalLang     Language @default(KO)
+  titleOriginal    String
+  contentOriginal  String
+  pinned           Boolean  @default(false)
+  viewCount        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  author User           @relation("NoticeAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  i18n   NoticeI18n[]
+
+  @@index([authorId])
+  @@index([pinned])
+  @@index([createdAt])
+}
+
+model NoticeI18n {
+  id        String   @id @default(cuid())
+  noticeId  String
+  lang      Language
+  title     String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  notice Notice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@unique([noticeId, lang])
+  @@index([noticeId])
+  @@index([lang])
+}
+
+//
+// ✅ 커뮤니티 게시글 (Community Post)
+//
+enum PostCategory {
+  FREE      // 자유
+  QUESTION  // QnA
+  SHARE     // 정보 공유
+  REVIEW    // 후기
+}
+
+model CommunityPost {
+  id              String       @id @default(cuid())
+  authorId        String
+  category        PostCategory @default(FREE)
+  originalLang     Language     @default(KO)
+  titleOriginal    String
+  contentOriginal  String
+  tags             String[]    @default([])
+  likeCount        Int          @default(0)
+  viewCount        Int          @default(0)
+  commentCount     Int          @default(0)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  author   User              @relation("PostAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  i18n     PostI18n[]
+  comments PostComment[]
+  likes    PostLike[]
+
+  @@index([authorId])
+  @@index([category])
+  @@index([createdAt])
+  @@index([likeCount])
+  @@index([commentCount])
+}
+
+model PostI18n {
+  id        String   @id @default(cuid())
+  postId    String
+  lang      Language
+  title     String
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  post CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, lang])
+  @@index([postId])
+  @@index([lang])
+}
+
+model PostComment {
+  id              String   @id @default(cuid())
+  postId          String
+  authorId        String
+  parentCommentId String?  // 대댓글 지원
+  originalLang     Language @default(KO)
+  contentOriginal String
+  likeCount        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  post            CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author          User          @relation("CommentAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  parent          PostComment?   @relation("CommentReply", fields: [parentCommentId], references: [id], onDelete: Cascade)
+  replies         PostComment[] @relation("CommentReply")
+  i18n            CommentI18n[]
+  likes           CommentLike[]
+
+  @@index([postId])
+  @@index([authorId])
+  @@index([parentCommentId])
+  @@index([createdAt])
+}
+
+model CommentI18n {
+  id        String   @id @default(cuid())
+  commentId String
+  lang      Language
+  content   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  comment PostComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, lang])
+  @@index([commentId])
+  @@index([lang])
+}
+
+model PostLike {
+  id        String   @id @default(cuid())
+  postId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  post CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User          @relation("PostLikeUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([postId])
+  @@index([userId])
+}
+
+model CommentLike {
+  id        String   @id @default(cuid())
+  commentId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  comment PostComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User        @relation("CommentLikeUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, userId])
+  @@index([commentId])
+  @@index([userId])
 }
