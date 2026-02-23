@@ -1,10 +1,20 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
 import { ProjectService } from './project.service';
 import { ConfirmProjectDto } from './dto/confirm-project.dto';
+import { CreateProjectDto } from './dto/create-project.dto';
 
 @Controller('projects')
 export class ProjectController {
   constructor(private readonly projectService: ProjectService) {}
+
+  /**
+   * ✅ 일반 프로젝트 생성(프론트 폼 기반)
+   * POST /projects
+   */
+  @Post()
+  async create(@Body() dto: CreateProjectDto) {
+    return this.projectService.createProject(dto);
+  }
 
   /**
    * 프로젝트 확정(artifact 기반 생성)
@@ -57,5 +67,14 @@ export class ProjectController {
   @Get(':id/kanban')
   async getKanbanBoard(@Param('id') id: string) {
     return this.projectService.getKanbanBoard(id);
+  }
+
+  /**
+   * ✅ 프로젝트 삭제
+   * DELETE /projects/:id
+   */
+  @Delete(':id')
+  async deleteProject(@Param('id') id: string) {
+    return this.projectService.deleteProject(id);
   }
 }
