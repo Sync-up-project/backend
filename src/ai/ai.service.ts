@@ -58,6 +58,18 @@ export class AiService {
   async generateProject(dto: GenerateProjectDto) {
     const language = this.mapLang(dto.language ?? AiLanguage.KO);
     const preset = this.mapPreset(dto.mockPreset);
+    const requestedCreatedById = (dto as any).createdById;
+    let createdById: string | null = null;
+    if (
+      typeof requestedCreatedById === 'string' &&
+      requestedCreatedById.trim().length > 0
+    ) {
+      const foundUser = await this.prisma.user.findUnique({
+        where: { id: requestedCreatedById.trim() },
+        select: { id: true },
+      });
+      createdById = foundUser?.id ?? null;
+    }
     const cacheKey = this.cacheEnabled
       ? this.buildCacheKey({
           provider: this.provider.name,
@@ -113,7 +125,7 @@ export class AiService {
       const artifact = await this.prisma.aiArtifact.create({
         data: {
           projectId: null,
-          createdById: null,
+          createdById,
           type: AiArtifactType.OTHER,
           version: 1,
           contentJson: bundleJson,
@@ -204,7 +216,7 @@ export class AiService {
     const artifact = await this.prisma.aiArtifact.create({
       data: {
         projectId: null,
-        createdById: null,
+        createdById,
         type: AiArtifactType.OTHER, // ✅ 현재 enum에 존재하는 값 사용
         version: 1,
         contentJson: bundleJson, // ✅ Prisma JSON 타입

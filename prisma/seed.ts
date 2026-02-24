@@ -1,12 +1,7 @@
-import path from "path";
-import dotenv from "dotenv";
+/* eslint-disable no-console */
 
-// .env 파일 경로 설정 (backend 폴더 기준 상위 폴더)
-const envPath = path.resolve(process.cwd(), "../.env");
-dotenv.config({
-  path: envPath,
-  override: true, // 기존 환경 변수를 덮어씀
-});
+import * as path from "node:path";
+import * as dotenv from "dotenv";
 
 import {
   PrismaClient,
@@ -26,70 +21,133 @@ import {
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 
-const hashPassword = async (password: string): Promise<string> => {
-  try {
-    const bcrypt = require("bcryptjs");
-    return await bcrypt.hash(password, 10);
-  } catch (error) {
-    console.warn("⚠️  bcryptjs가 설치되지 않았습니다. 임시 해시를 사용합니다.");
-    return `temp_hash_${password}`;
-  }
-};
+/**
+ * ✅ .env 로드
+ * - 컨테이너 기준: /app/prisma/seed.ts → __dirname=/app/prisma → ../.env => /app/.env
+ * - 로컬 기준도 동일하게 동작 가능 (repo 구조가 backend/prisma/seed.ts 형태라면)
+ */
+const envPath = path.resolve(__dirname, "../.env");
+dotenv.config({
+  path: envPath,
+  override: true,
+});
 
-// ✅ 로컬 실행용: DATABASE_URL의 호스트를 localhost로 변경
-if (process.env.DATABASE_URL) {
-  // Docker 호스트명 'db'를 로컬 호스트 'localhost'로 변경
-  if (process.env.DATABASE_URL.includes("@db:")) {
-    process.env.DATABASE_URL = process.env.DATABASE_URL.replace("@db:", "@localhost:");
-  }
-  // schema=public이 없으면 추가
-  if (!process.env.DATABASE_URL.includes("schema=")) {
-    process.env.DATABASE_URL += (process.env.DATABASE_URL.includes("?") ? "&" : "?") + "schema=public";
-  }
-} else {
-  throw new Error("DATABASE_URL이 설정되지 않았습니다. .env 파일을 확인해주세요.");
+function maskDbUrl(url: string) {
+  return url.replace(/:[^:@]+@/, ":****@");
 }
 
-console.log("🔗 DATABASE_URL:", process.env.DATABASE_URL.replace(/:[^:@]+@/, ":****@"));
+/**
+ * ✅ DATABASE_URL 유효성 + schema 보정
+ * - Docker 내부 실행 시: host는 보통 db (compose service name)
+ * - 로컬 실행 시: host는 보통 localhost
+ * - “자동 치환”은 사고가 많아서, 옵션 플래그(SEED_LOCAL=true)로만 허용
+ */
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    `DATABASE_URL이 설정되지 않았습니다. (${envPath}) .env 파일을 확인해주세요.`,
+  );
+}
 
-// ✅ PrismaPg 어댑터 사용 (prisma.service.ts와 동일한 방식)
+if (
+  process.env.SEED_LOCAL === "true" &&
+  process.env.DATABASE_URL.includes("@db:")
+) {
+  // 로컬에서만 필요할 때만 치환
+  process.env.DATABASE_URL = process.env.DATABASE_URL.replace(
+    "@db:",
+    "@localhost:",
+  );
+}
+
+if (!process.env.DATABASE_URL.includes("schema=")) {
+  process.env.DATABASE_URL +=
+    (process.env.DATABASE_URL.includes("?") ? "&" : "?") + "schema=public";
+}
+
+console.log("🔗 DATABASE_URL:", maskDbUrl(process.env.DATABASE_URL));
+
+/**
+ * ✅ PrismaPg 어댑터 (네 prisma.service.ts와 동일 방식)
+ */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
-async function main() {
-  console.log("🌱 시드 데이터 생성을 시작합니다...");
+/**
+ * ✅ bcrypt 해시
+ * - bcryptjs가 설치되어 있으면 사용
+ * - 없으면 임시 해시로라도 시드가 진행되게 (개발 편의)
+ */
+const hashPassword = async (password: string): Promise<string> => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const bcrypt = require("bcryptjs");
+    return await bcrypt.hash(password, 10);
+  } catch {
+    console.warn("⚠️  bcryptjs가 설치되지 않아 임시 해시를 사용합니다.");
+    return `temp_hash_${password}`;
+  }
+};
 
+async function wipeDatabase() {
   console.log("🗑️  기존 데이터 삭제 중...");
+
+  /**
+   * ✅ FK 고려해서 “자식 → 부모” 순서로 삭제
+   * (너가 작성한 순서를 기반으로 안전하게 조금 더 보강했어)
+   */
   await prisma.chatMessageI18n.deleteMany();
   await prisma.chatMessage.deleteMany();
+
   await prisma.chatRoomMember.deleteMany();
   await prisma.chatRoom.deleteMany();
+
   await prisma.kanbanCardAssignee.deleteMany();
   await prisma.kanbanCard.deleteMany();
   await prisma.kanbanColumn.deleteMany();
   await prisma.kanbanBoard.deleteMany();
+
   await prisma.projectSuccessStoryI18n.deleteMany();
   await prisma.projectSuccessStory.deleteMany();
+
   await prisma.trendArticleI18n.deleteMany();
   await prisma.trendArticle.deleteMany();
+
   await prisma.userBadge.deleteMany();
   await prisma.badge.deleteMany();
+
   await prisma.projectEvaluation.deleteMany();
+
   await prisma.notificationI18n.deleteMany();
   await prisma.notification.deleteMany();
+
   await prisma.application.deleteMany();
   await prisma.invitation.deleteMany();
+
   await prisma.projectMember.deleteMany();
   await prisma.projectPositionNeed.deleteMany();
   await prisma.projectTechStack.deleteMany();
   await prisma.projectI18n.deleteMany();
+
+  // 여기서부터 부모 테이블
   await prisma.project.deleteMany();
+
   await prisma.userTechStack.deleteMany();
   await prisma.techStack.deleteMany();
+
   await prisma.user.deleteMany();
+}
+
+async function main() {
+  console.log("🌱 시드 데이터 생성을 시작합니다...");
+
+  // ✅ 연결 확인 (초기 진단용)
+  await prisma.$queryRaw`SELECT 1`;
+  console.log("✅ DB 연결 확인 완료");
+
+  await wipeDatabase();
 
   console.log("📚 기술 스택 생성 중...");
   const techStacks = await Promise.all([
@@ -284,8 +342,7 @@ async function main() {
         ownerId: users[1].id,
         originalLang: Language.KO,
         titleOriginal: "풀스택 개발자 모집",
-        summaryOriginal:
-          "React와 NestJS를 활용한 웹 애플리케이션 개발 프로젝트입니다.",
+        summaryOriginal: "React와 NestJS를 활용한 웹 애플리케이션 개발 프로젝트입니다.",
         descriptionOriginal:
           "최신 기술 스택을 활용하여 실무에 가까운 프로젝트를 진행하려고 합니다. 프론트엔드와 백엔드 개발 경험이 있는 개발자를 모집합니다.",
         mode: ProjectMode.ONLINE,
@@ -772,4 +829,5 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    await pool.end().catch(() => {});
   });

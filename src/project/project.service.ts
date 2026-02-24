@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfirmProjectDto } from './dto/confirm-project.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { UpdateProjectDto } from './dto/update-project.dto';
 
 @Injectable()
 export class ProjectService {
@@ -127,13 +128,18 @@ export class ProjectService {
    * ✅ FK(외래키) 제약으로 삭제가 실패하지 않도록
    *   연관 테이블(칸반/멤버/스택연결/포지션 등)을 먼저 정리한 뒤 project를 삭제합니다.
    */
-  async deleteProject(projectId: string) {
+  async deleteProject(projectId: string, userId: string) {
+    if (!userId) throw new ForbiddenException('로그인이 필요합니다.');
+
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
-      select: { id: true },
+      select: { id: true, ownerId: true },
     });
 
     if (!project) throw new NotFoundException('프로젝트를 찾을 수 없어요.');
+    if (project.ownerId !== userId) {
+      throw new ForbiddenException('프로젝트 소유자만 삭제할 수 있어요.');
+    }
 
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -216,6 +222,56 @@ export class ProjectService {
         `프로젝트 삭제 중 오류가 발생했습니다. (연관 데이터/스키마 확인 필요)`,
       );
     }
+  }
+
+  /**
+   * ✅ PATCH /projects/:id
+   * - 오너만 프로젝트 핵심 정보를 수정
+   * - 모집 조기 마감은 deadline을 현재 시각으로 patch 하면 처리됩니다.
+   */
+  async updateProject(projectId: string, userId: string, dto: UpdateProjectDto) {
+    if (!userId) throw new ForbiddenException('로그인이 필요합니다.');
+
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true, ownerId: true },
+    });
+    if (!project) throw new NotFoundException('프로젝트를 찾을 수 없어요.');
+    if (project.ownerId !== userId) {
+      throw new ForbiddenException('프로젝트 소유자만 수정할 수 있어요.');
+    }
+
+    const data: any = {};
+    if (typeof dto.titleOriginal === 'string') data.titleOriginal = dto.titleOriginal.trim();
+    if (typeof dto.summaryOriginal === 'string') data.summaryOriginal = dto.summaryOriginal.trim();
+    if (typeof dto.descriptionOriginal === 'string')
+      data.descriptionOriginal = dto.descriptionOriginal.trim();
+    if (typeof dto.capacity === 'number' && Number.isFinite(dto.capacity)) {
+      data.capacity = Math.max(1, Math.floor(dto.capacity));
+    }
+    if (dto.deadline) data.deadline = new Date(dto.deadline);
+    if (dto.endDate) data.endDate = new Date(dto.endDate);
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('수정할 항목이 없어요.');
+    }
+
+    const updated = await this.prisma.project.update({
+      where: { id: projectId },
+      data,
+      select: {
+        id: true,
+        ownerId: true,
+        titleOriginal: true,
+        summaryOriginal: true,
+        descriptionOriginal: true,
+        capacity: true,
+        deadline: true,
+        endDate: true,
+        updatedAt: true,
+      },
+    });
+    return { project: updated };
   }
 
   /**
@@ -390,13 +446,46 @@ export class ProjectService {
       (dto as any).contentJson ??
       dto;
 
-    const ownerId = raw.ownerId;
+    const requestedOwnerId = raw.ownerId ?? (dto as any).ownerId ?? null;
+    const artifact = dto.artifactId
+      ? await this.prisma.aiArtifact.findUnique({
+          where: { id: dto.artifactId },
+          select: { createdById: true },
+        })
+      : null;
+    const fallbackOwnerId = artifact?.createdById ?? null;
+
+    let ownerId: string | null = null;
+    for (const candidate of [requestedOwnerId, fallbackOwnerId]) {
+      if (!candidate || typeof candidate !== 'string') continue;
+      const user = await this.prisma.user.findUnique({
+        where: { id: candidate },
+        select: { id: true },
+      });
+      if (user?.id) {
+        ownerId = user.id;
+        break;
+      }
+    }
     const originalLang = raw.originalLang ?? raw.lang ?? 'KO';
     const titleOriginal = raw.titleOriginal ?? raw.title ?? raw?.project?.titleOriginal;
     const summaryOriginal = raw.summaryOriginal ?? raw.summary ?? '';
-    const descriptionOriginal = raw.descriptionOriginal ?? raw.description ?? '';
+    const collaborationTools: string[] = Array.isArray(raw.collaborationTools)
+      ? raw.collaborationTools
+          .filter((v: any) => typeof v === 'string' && v.trim().length > 0)
+          .map((v: string) => v.trim())
+      : [];
+    const descriptionBase = raw.descriptionOriginal ?? raw.description ?? '';
+    const descriptionOriginal =
+      collaborationTools.length > 0
+        ? `${descriptionBase}\n\n협업 도구: ${collaborationTools.join(', ')}`
+        : descriptionBase;
 
-    if (!ownerId) throw new BadRequestException('ownerId가 필요해요.');
+    if (!ownerId) {
+      throw new BadRequestException(
+        '유효한 ownerId를 찾지 못했어요. 다시 로그인한 뒤 시도해주세요.',
+      );
+    }
     if (!titleOriginal) throw new BadRequestException('titleOriginal(title)가 필요해요.');
 
     const mode = raw.mode ?? 'ONLINE';

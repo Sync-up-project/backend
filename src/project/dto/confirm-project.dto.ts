@@ -1,4 +1,4 @@
-import { IsEnum, IsObject, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsDateString, IsEnum, IsObject, IsOptional, IsString } from 'class-validator';
 
 export enum ProjectModeDto {
   ONLINE = 'ONLINE',
@@ -30,4 +30,36 @@ export class ConfirmProjectDto {
   @IsOptional()
   @IsObject()
   decisions?: Record<string, any>;
+
+  @IsOptional()
+  @IsString()
+  ownerId?: string;
+
+  @IsOptional()
+  @IsString()
+  originalLang?: string;
+
+  @IsOptional()
+  @IsString()
+  summaryOriginal?: string;
+
+  @IsOptional()
+  @IsString()
+  descriptionOriginal?: string;
+
+  @IsOptional()
+  @IsDateString()
+  deadline?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsArray()
+  techStacks?: string[];
+
+  @IsOptional()
+  @IsArray()
+  collaborationTools?: string[];
 }

@@ -1,7 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ProjectService } from './project.service';
 import { ConfirmProjectDto } from './dto/confirm-project.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { UpdateProjectDto } from './dto/update-project.dto';
 
 @Controller('projects')
 export class ProjectController {
@@ -74,7 +77,22 @@ export class ProjectController {
    * DELETE /projects/:id
    */
   @Delete(':id')
-  async deleteProject(@Param('id') id: string) {
-    return this.projectService.deleteProject(id);
+  @UseGuards(JwtAuthGuard)
+  async deleteProject(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.projectService.deleteProject(id, String(user?.id ?? ''));
+  }
+
+  /**
+   * ✅ 프로젝트 수정 / 모집 조기 마감
+   * PATCH /projects/:id
+   */
+  @Patch(':id')
+  @UseGuards(JwtAuthGuard)
+  async updateProject(
+    @Param('id') id: string,
+    @Body() dto: UpdateProjectDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.projectService.updateProject(id, String(user?.id ?? ''), dto);
   }
 }

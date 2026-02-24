@@ -32,4 +32,8 @@ export class GenerateProjectDto {
   @IsOptional()
   @IsEnum(MockPreset)
   mockPreset?: MockPreset;
+
+  @IsOptional()
+  @IsString()
+  createdById?: string;
 }
