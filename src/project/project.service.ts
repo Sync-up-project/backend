@@ -251,25 +251,92 @@ export class ProjectService {
     }
     if (dto.deadline) data.deadline = new Date(dto.deadline);
     if (dto.endDate) data.endDate = new Date(dto.endDate);
+    if (typeof (dto as any).mode === 'string') data.mode = (dto as any).mode;
+    if (typeof (dto as any).difficulty === 'string')
+      data.difficulty = (dto as any).difficulty;
+    if (typeof (dto as any).status === 'string') data.status = (dto as any).status;
 
-    if (Object.keys(data).length === 0) {
+    const rawTechStacks = (dto as any).techStacks;
+    const techStackNames: string[] | null = Array.isArray(rawTechStacks)
+      ? rawTechStacks
+          .map((t: any) => (typeof t === 'string' ? t : t?.name))
+          .filter((v: any) => typeof v === 'string' && v.trim().length > 0)
+          .map((v: string) => v.trim())
+      : null;
+
+    const rawPositionNeeds = (dto as any).positionNeeds;
+    const positionNeeds:
+      | Array<{ position: any; headcount?: number }>
+      | null = Array.isArray(rawPositionNeeds) ? rawPositionNeeds : null;
+
+    if (
+      Object.keys(data).length === 0 &&
+      techStackNames === null &&
+      positionNeeds === null
+    ) {
       throw new BadRequestException('수정할 항목이 없어요.');
     }
 
-    const updated = await this.prisma.project.update({
-      where: { id: projectId },
-      data,
-      select: {
-        id: true,
-        ownerId: true,
-        titleOriginal: true,
-        summaryOriginal: true,
-        descriptionOriginal: true,
-        capacity: true,
-        deadline: true,
-        endDate: true,
-        updatedAt: true,
-      },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const projectUpdated = await tx.project.update({
+        where: { id: projectId },
+        data,
+      });
+
+      if (techStackNames !== null) {
+        await tx.projectTechStack.deleteMany({ where: { projectId } });
+        for (const name of techStackNames) {
+          const tech = await tx.techStack.upsert({
+            where: { name },
+            update: {},
+            create: { name },
+          });
+          await tx.projectTechStack.create({
+            data: { projectId, techStackId: tech.id },
+          });
+        }
+      }
+
+      if (positionNeeds !== null) {
+        await tx.projectPositionNeed.deleteMany({ where: { projectId } });
+        for (const pn of positionNeeds) {
+          if (!pn?.position) continue;
+          await tx.projectPositionNeed.create({
+            data: {
+              projectId,
+              position: pn.position,
+              headcount: pn.headcount ? Number(pn.headcount) : 1,
+            },
+          });
+        }
+      }
+
+      const full = await tx.project.findUnique({
+        where: { id: projectUpdated.id },
+        select: {
+          id: true,
+          ownerId: true,
+          titleOriginal: true,
+          summaryOriginal: true,
+          descriptionOriginal: true,
+          mode: true,
+          difficulty: true,
+          status: true,
+          capacity: true,
+          deadline: true,
+          endDate: true,
+          updatedAt: true,
+          techStacks: {
+            include: {
+              techStack: { select: { id: true, name: true } },
+            },
+          },
+          positionNeeds: {
+            select: { id: true, position: true, headcount: true },
+          },
+        },
+      });
+      return full;
     });
     return { project: updated };
   }
