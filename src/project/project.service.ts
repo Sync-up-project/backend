@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfirmProjectDto } from './dto/confirm-project.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -18,13 +23,19 @@ export class ProjectService {
   async createProject(dto: CreateProjectDto) {
     const ownerId = (dto as any).ownerId;
     if (!ownerId) throw new BadRequestException('ownerId가 필요해요.');
-    if (!dto.titleOriginal?.trim()) throw new BadRequestException('titleOriginal이 필요해요.');
+    if (!dto.titleOriginal?.trim())
+      throw new BadRequestException('titleOriginal이 필요해요.');
 
     const originalLang = (dto as any).originalLang ?? 'KO';
     const titleOriginal = dto.titleOriginal.trim();
-    const summaryOriginal = (dto as any).summaryOriginal?.trim?.() ?? (dto as any).summaryOriginal ?? '';
+    const summaryOriginal =
+      (dto as any).summaryOriginal?.trim?.() ??
+      (dto as any).summaryOriginal ??
+      '';
     const descriptionOriginal =
-      (dto as any).descriptionOriginal?.trim?.() ?? (dto as any).descriptionOriginal ?? '';
+      (dto as any).descriptionOriginal?.trim?.() ??
+      (dto as any).descriptionOriginal ??
+      '';
 
     const mode = (dto as any).mode ?? ('ONLINE' as any);
     const difficulty = (dto as any).difficulty ?? ('MEDIUM' as any);
@@ -32,9 +43,15 @@ export class ProjectService {
 
     const capacity = Number((dto as any).capacity ?? 1);
 
-    const deadline = (dto as any).deadline ? new Date((dto as any).deadline) : null;
-    const startDate = (dto as any).startDate ? new Date((dto as any).startDate) : null;
-    const endDate = (dto as any).endDate ? new Date((dto as any).endDate) : null;
+    const deadline = (dto as any).deadline
+      ? new Date((dto as any).deadline)
+      : null;
+    const startDate = (dto as any).startDate
+      ? new Date((dto as any).startDate)
+      : null;
+    const endDate = (dto as any).endDate
+      ? new Date((dto as any).endDate)
+      : null;
 
     // techStacks: ["React","NestJS"] or [{name:"React"}] 등을 폭넓게 수용
     const rawTechStacks = (dto as any).techStacks;
@@ -47,11 +64,10 @@ export class ProjectService {
 
     // positionNeeds: [{ position: "DEV", headcount: 2 }] 형태 수용
     const rawPositionNeeds = (dto as any).positionNeeds;
-    const positionNeeds: Array<{ position: any; headcount?: number }> = Array.isArray(rawPositionNeeds)
-      ? rawPositionNeeds
-      : [];
+    const positionNeeds: Array<{ position: any; headcount?: number }> =
+      Array.isArray(rawPositionNeeds) ? rawPositionNeeds : [];
 
-    const created = await this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async tx => {
       // (a) Project 생성
       const project = await tx.project.create({
         data: {
@@ -142,7 +158,7 @@ export class ProjectService {
     }
 
     try {
-      await this.prisma.$transaction(async (tx) => {
+      await this.prisma.$transaction(async tx => {
         // 1) 프로젝트 관련 매핑/하위 데이터 정리
         // - 프로젝트 기술스택 매핑
         await tx.projectTechStack.deleteMany({ where: { projectId } });
@@ -175,14 +191,14 @@ export class ProjectService {
             where: { boardId: board.id },
             select: { id: true },
           });
-          const columnIds = columns.map((c) => c.id);
+          const columnIds = columns.map(c => c.id);
 
           if (columnIds.length > 0) {
             const cards = await tx.kanbanCard.findMany({
               where: { columnId: { in: columnIds } },
               select: { id: true },
             });
-            const cardIds = cards.map((c) => c.id);
+            const cardIds = cards.map(c => c.id);
 
             if (cardIds.length > 0) {
               // 카드 담당자 매핑(assignees)
@@ -229,7 +245,11 @@ export class ProjectService {
    * - 오너만 프로젝트 핵심 정보를 수정
    * - 모집 조기 마감은 deadline을 현재 시각으로 patch 하면 처리됩니다.
    */
-  async updateProject(projectId: string, userId: string, dto: UpdateProjectDto) {
+  async updateProject(
+    projectId: string,
+    userId: string,
+    dto: UpdateProjectDto,
+  ) {
     if (!userId) throw new ForbiddenException('로그인이 필요합니다.');
 
     const project = await this.prisma.project.findUnique({
@@ -242,8 +262,10 @@ export class ProjectService {
     }
 
     const data: any = {};
-    if (typeof dto.titleOriginal === 'string') data.titleOriginal = dto.titleOriginal.trim();
-    if (typeof dto.summaryOriginal === 'string') data.summaryOriginal = dto.summaryOriginal.trim();
+    if (typeof dto.titleOriginal === 'string')
+      data.titleOriginal = dto.titleOriginal.trim();
+    if (typeof dto.summaryOriginal === 'string')
+      data.summaryOriginal = dto.summaryOriginal.trim();
     if (typeof dto.descriptionOriginal === 'string')
       data.descriptionOriginal = dto.descriptionOriginal.trim();
     if (typeof dto.capacity === 'number' && Number.isFinite(dto.capacity)) {
@@ -254,7 +276,8 @@ export class ProjectService {
     if (typeof (dto as any).mode === 'string') data.mode = (dto as any).mode;
     if (typeof (dto as any).difficulty === 'string')
       data.difficulty = (dto as any).difficulty;
-    if (typeof (dto as any).status === 'string') data.status = (dto as any).status;
+    if (typeof (dto as any).status === 'string')
+      data.status = (dto as any).status;
 
     const rawTechStacks = (dto as any).techStacks;
     const techStackNames: string[] | null = Array.isArray(rawTechStacks)
@@ -265,9 +288,8 @@ export class ProjectService {
       : null;
 
     const rawPositionNeeds = (dto as any).positionNeeds;
-    const positionNeeds:
-      | Array<{ position: any; headcount?: number }>
-      | null = Array.isArray(rawPositionNeeds) ? rawPositionNeeds : null;
+    const positionNeeds: Array<{ position: any; headcount?: number }> | null =
+      Array.isArray(rawPositionNeeds) ? rawPositionNeeds : null;
 
     if (
       Object.keys(data).length === 0 &&
@@ -277,7 +299,7 @@ export class ProjectService {
       throw new BadRequestException('수정할 항목이 없어요.');
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const updated = await this.prisma.$transaction(async tx => {
       const projectUpdated = await tx.project.update({
         where: { id: projectId },
         data,
@@ -358,16 +380,16 @@ export class ProjectService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return projects.map((project) => {
+    return projects.map(project => {
       const membersCount = project.members.length + 1; // +1은 소유자
       const membersCountMax = project.capacity;
 
-      const techStacks = project.techStacks.map((pt) => ({
+      const techStacks = project.techStacks.map(pt => ({
         id: pt.techStack.id,
         name: pt.techStack.name,
       }));
 
-      const positionNeeds = project.positionNeeds.map((pn) => ({
+      const positionNeeds = project.positionNeeds.map(pn => ({
         id: pn.id,
         position: pn.position,
       }));
@@ -403,15 +425,19 @@ export class ProjectService {
       take,
       include: {
         owner: { select: { id: true, nickname: true } },
-        techStacks: { include: { techStack: { select: { id: true, name: true } } } },
-        positionNeeds: { select: { id: true, position: true, headcount: true } },
+        techStacks: {
+          include: { techStack: { select: { id: true, name: true } } },
+        },
+        positionNeeds: {
+          select: { id: true, position: true, headcount: true },
+        },
         members: { select: { id: true, userId: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
 
     return {
-      items: projects.map((p) => ({
+      items: projects.map(p => ({
         id: p.id,
         ownerId: p.ownerId,
         owner: p.owner,
@@ -430,11 +456,11 @@ export class ProjectService {
         viewCount: p.viewCount,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
-        techStacks: p.techStacks.map((pt) => ({
+        techStacks: p.techStacks.map(pt => ({
           id: pt.techStack.id,
           name: pt.techStack.name,
         })),
-        positionNeeds: p.positionNeeds.map((pn) => ({
+        positionNeeds: p.positionNeeds.map(pn => ({
           id: pn.id,
           position: pn.position,
           headcount: pn.headcount,
@@ -460,16 +486,53 @@ export class ProjectService {
         members: {
           include: {
             user: {
-              select: { id: true, nickname: true, profileImageUrl: true, role: true },
+              select: {
+                id: true,
+                nickname: true,
+                profileImageUrl: true,
+                role: true,
+              },
             },
           },
         },
       },
     });
 
+    const latestArtifactRow = await this.prisma.aiArtifact.findFirst({
+      where: { projectId: id },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        type: true,
+        version: true,
+        projectId: true,
+        createdById: true,
+        promptHash: true,
+        createdAt: true,
+        updatedAt: true,
+        contentJson: true,
+      },
+    });
+
+    const latestArtifact = latestArtifactRow
+      ? {
+          meta: {
+            id: latestArtifactRow.id,
+            type: latestArtifactRow.type,
+            version: latestArtifactRow.version,
+            projectId: latestArtifactRow.projectId,
+            createdById: latestArtifactRow.createdById,
+            promptHash: latestArtifactRow.promptHash,
+            createdAt: latestArtifactRow.createdAt,
+            updatedAt: latestArtifactRow.updatedAt,
+          },
+          contentJson: latestArtifactRow.contentJson,
+        }
+      : null;
+
     if (!project) throw new NotFoundException('프로젝트를 찾을 수 없어요.');
 
-    return project;
+    return { project, latestArtifact };
   }
 
   /**
@@ -489,7 +552,13 @@ export class ProjectService {
               include: {
                 assignees: {
                   include: {
-                    user: { select: { id: true, nickname: true, profileImageUrl: true } },
+                    user: {
+                      select: {
+                        id: true,
+                        nickname: true,
+                        profileImageUrl: true,
+                      },
+                    },
                   },
                 },
               },
@@ -535,7 +604,8 @@ export class ProjectService {
       }
     }
     const originalLang = raw.originalLang ?? raw.lang ?? 'KO';
-    const titleOriginal = raw.titleOriginal ?? raw.title ?? raw?.project?.titleOriginal;
+    const titleOriginal =
+      raw.titleOriginal ?? raw.title ?? raw?.project?.titleOriginal;
     const summaryOriginal = raw.summaryOriginal ?? raw.summary ?? '';
     const collaborationTools: string[] = Array.isArray(raw.collaborationTools)
       ? raw.collaborationTools
@@ -553,7 +623,8 @@ export class ProjectService {
         '유효한 ownerId를 찾지 못했어요. 다시 로그인한 뒤 시도해주세요.',
       );
     }
-    if (!titleOriginal) throw new BadRequestException('titleOriginal(title)가 필요해요.');
+    if (!titleOriginal)
+      throw new BadRequestException('titleOriginal(title)가 필요해요.');
 
     const mode = raw.mode ?? 'ONLINE';
     const difficulty = raw.difficulty ?? 'MEDIUM';
@@ -570,11 +641,10 @@ export class ProjectService {
           .filter((v: any) => typeof v === 'string' && v.trim().length > 0)
       : [];
 
-    const positionNeeds: Array<{ position: any; headcount?: number }> = Array.isArray(raw.positionNeeds)
-      ? raw.positionNeeds
-      : [];
+    const positionNeeds: Array<{ position: any; headcount?: number }> =
+      Array.isArray(raw.positionNeeds) ? raw.positionNeeds : [];
 
-    const created = await this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async tx => {
       const project = await tx.project.create({
         data: {
           ownerId,
@@ -628,6 +698,25 @@ export class ProjectService {
         },
         include: { columns: true },
       });
+
+      // draft artifact를 생성된 프로젝트에 연결
+      if (dto.artifactId) {
+        const currentArtifact = await tx.aiArtifact.findUnique({
+          where: { id: dto.artifactId },
+          select: { id: true, revisionBaseId: true },
+        });
+
+        if (currentArtifact) {
+          const baseId = currentArtifact.revisionBaseId ?? currentArtifact.id;
+
+          await tx.aiArtifact.updateMany({
+            where: {
+              OR: [{ id: baseId }, { revisionBaseId: baseId }],
+            },
+            data: { projectId: project.id },
+          });
+        }
+      }
 
       return { project, board };
     });
