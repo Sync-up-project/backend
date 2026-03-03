@@ -64,6 +64,24 @@ export class ProjectController {
   }
 
   /**
+   * 추천 유저 조회 (프로젝트 오너 전용)
+   * GET /projects/:id/recommend-users?limit=5
+   */
+  @Get(':id/recommend-users')
+  @UseGuards(JwtAuthGuard)
+  async getRecommendUsers(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Query('limit') limit?: string,
+  ) {
+    return this.projectService.getRecommendUsers(
+      id,
+      String(user?.id ?? ''),
+      limit ? Number(limit) : 5,
+    );
+  }
+
+  /**
    * 프로젝트 칸반 조회
    * GET /projects/:id/kanban
    */

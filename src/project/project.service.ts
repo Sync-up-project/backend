@@ -572,6 +572,168 @@ export class ProjectService {
   }
 
   /**
+   * ✅ GET /projects/:id/recommend-users
+   * - 오너 기준으로 프로젝트에 맞는 유저 추천
+   * - 초대/자동매칭 액션 없이 "추천 목록 조회"만 제공
+   */
+  async getRecommendUsers(projectId: string, userId: string, limit = 5) {
+    if (!userId) throw new ForbiddenException('로그인이 필요합니다.');
+
+    const safeLimit = Math.min(Math.max(Number(limit) || 5, 1), 20);
+
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      include: {
+        techStacks: {
+          include: { techStack: { select: { name: true } } },
+        },
+        positionNeeds: { select: { position: true } },
+        members: { select: { userId: true } },
+      },
+    });
+
+    if (!project) throw new NotFoundException('프로젝트를 찾을 수 없어요.');
+    if (project.ownerId !== userId) {
+      throw new ForbiddenException('프로젝트 소유자만 추천 유저를 볼 수 있어요.');
+    }
+
+    const excludedUserIds = Array.from(
+      new Set([project.ownerId, ...project.members.map(m => m.userId)]),
+    );
+
+    const neededRoles = Array.from(
+      new Set(project.positionNeeds.map(p => String(p.position))),
+    );
+
+    const projectTechSet = new Set(
+      project.techStacks
+        .map(t => t.techStack.name)
+        .filter(Boolean)
+        .map(v => v.toLowerCase()),
+    );
+
+    const candidates = await this.prisma.user.findMany({
+      where: {
+        id: { notIn: excludedUserIds },
+        ...(neededRoles.length > 0 ? { role: { in: neededRoles as any } } : {}),
+      },
+      select: {
+        id: true,
+        nickname: true,
+        role: true,
+        githubCommits: true,
+        githubRepoCount: true,
+        githubTopLangs: true,
+        techStacks: {
+          include: { techStack: { select: { name: true } } },
+        },
+      },
+      take: 200,
+    });
+
+    const items = candidates
+      .map(candidate => {
+        const candidateTechNames = candidate.techStacks
+          .map(t => t.techStack.name)
+          .filter(Boolean);
+        const candidateTechSet = new Set(
+          candidateTechNames.map(v => v.toLowerCase()),
+        );
+
+        const roleMatch =
+          neededRoles.length === 0
+            ? 1
+            : neededRoles.includes(String(candidate.role ?? ''));
+
+        const intersectionCount = [...candidateTechSet].filter(v =>
+          projectTechSet.has(v),
+        ).length;
+        const unionCount = new Set([
+          ...Array.from(projectTechSet),
+          ...Array.from(candidateTechSet),
+        ]).size;
+        const techScore = unionCount > 0 ? intersectionCount / unionCount : 0;
+
+        const commitNorm = Math.min(
+          Math.max((candidate.githubCommits ?? 0) / 600, 0),
+          1,
+        );
+        const repoNorm = Math.min(
+          Math.max((candidate.githubRepoCount ?? 0) / 30, 0),
+          1,
+        );
+        const activityScore = 0.7 * commitNorm + 0.3 * repoNorm;
+
+        const topLangs = this.extractTopLangNames(candidate.githubTopLangs);
+        const topLangOverlap = topLangs.some(lang =>
+          projectTechSet.has(lang.toLowerCase()),
+        )
+          ? 1
+          : 0;
+
+        const totalScore =
+          (roleMatch ? 35 : 0) +
+          techScore * 45 +
+          activityScore * 15 +
+          topLangOverlap * 5;
+
+        const reasons: string[] = [];
+        if (roleMatch && candidate.role) {
+          reasons.push(`${String(candidate.role)} 포지션 일치`);
+        }
+        if (intersectionCount > 0) {
+          const matchedTech = candidateTechNames
+            .filter(name => projectTechSet.has(name.toLowerCase()))
+            .slice(0, 2);
+          reasons.push(`공통 스택: ${matchedTech.join(', ')}`);
+        }
+        if ((candidate.githubCommits ?? 0) >= 150) {
+          reasons.push(`최근 활동량 높음(커밋 ${candidate.githubCommits})`);
+        }
+        if (reasons.length === 0) reasons.push('기본 조건 기반 추천');
+
+        return {
+          id: candidate.id,
+          nickname: candidate.nickname ?? '이름 없음',
+          role: candidate.role ?? null,
+          techStacks: candidateTechNames.slice(0, 5),
+          githubCommits: candidate.githubCommits ?? 0,
+          githubRepoCount: candidate.githubRepoCount ?? 0,
+          matchingPoint: Math.round(totalScore),
+          reasons: reasons.slice(0, 3),
+        };
+      })
+      .sort((a, b) => b.matchingPoint - a.matchingPoint)
+      .slice(0, safeLimit);
+
+    return { projectId, items };
+  }
+
+  private extractTopLangNames(value: any): string[] {
+    if (!value) return [];
+
+    // { TypeScript: 40, Python: 20 } 형태
+    if (typeof value === 'object' && !Array.isArray(value)) {
+      return Object.keys(value).slice(0, 5);
+    }
+
+    // ["TypeScript", "Python"] 또는 [{name:"TypeScript"}] 형태
+    if (Array.isArray(value)) {
+      return value
+        .map(v => {
+          if (typeof v === 'string') return v;
+          if (v && typeof v === 'object' && typeof v.name === 'string')
+            return v.name;
+          return null;
+        })
+        .filter((v): v is string => Boolean(v))
+        .slice(0, 5);
+    }
+
+    return [];
+  }
+
+  /**
    * ✅ POST /projects/confirm
    * - artifact 기반 생성
    */
