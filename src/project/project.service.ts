@@ -471,6 +471,43 @@ export class ProjectService {
     };
   }
 
+  async getActiveProjectForUser(userId: string) {
+    if (!userId) {
+      throw new BadRequestException('userId가 필요합니다.');
+    }
+
+    const project = await this.prisma.project.findFirst({
+      where: {
+        OR: [
+          { ownerId: userId },
+          {
+            members: {
+              some: {
+                userId,
+              },
+            },
+          },
+        ],
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+      select: {
+        id: true,
+        titleOriginal: true,
+      },
+    });
+
+    if (!project) {
+      return { projectId: null, project: null };
+    }
+
+    return {
+      projectId: project.id,
+      project,
+    };
+  }
+
   /**
    * ✅ GET /projects/:id
    * - 상세 페이지에 필요한 정보(관계 포함)

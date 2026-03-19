@@ -28,15 +28,17 @@ export class ProjectController {
     return this.projectService.confirmFromArtifact(dto);
   }
 
-  /**
-   * 프로젝트 목록 조회(기본)
-   * GET /projects?limit=20
-   */
   @Get()
   async list(@Query('limit') limit?: string) {
     return this.projectService.listProjects({
       limit: limit ? Number(limit) : 20,
     });
+  }
+
+  @Get('my/active')
+  @UseGuards(JwtAuthGuard)
+  async getMyActiveProject(@CurrentUser() user: any) {
+    return this.projectService.getActiveProjectForUser(String(user?.id ?? ''));
   }
 
   /**
