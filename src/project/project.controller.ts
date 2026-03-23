@@ -57,17 +57,9 @@ export class ProjectController {
   }
 
   /**
-   * 프로젝트 상세 조회
-   * GET /projects/:id
-   */
-  @Get(':id')
-  async getProject(@Param('id') id: string) {
-    return this.projectService.getProjectById(id);
-  }
-
-  /**
    * 추천 유저 조회 (프로젝트 오너 전용)
    * GET /projects/:id/recommend-users?limit=5
+   * ⚠️ :id 보다 먼저 등록 (라우팅 안전)
    */
   @Get(':id/recommend-users')
   @UseGuards(JwtAuthGuard)
@@ -81,6 +73,15 @@ export class ProjectController {
       String(user?.id ?? ''),
       limit ? Number(limit) : 5,
     );
+  }
+
+  /**
+   * 프로젝트 상세 조회
+   * GET /projects/:id
+   */
+  @Get(':id')
+  async getProject(@Param('id') id: string) {
+    return this.projectService.getProjectById(id);
   }
 
   /**

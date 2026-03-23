@@ -649,10 +649,11 @@ export class ProjectService {
         .map(v => v.toLowerCase()),
     );
 
+    // role은 점수에만 반영합니다. DB에 role이 null인 유저가 많아
+    // positionNeeds로 Prisma에서 미리 거르면 후보가 0명이 되는 경우가 많습니다.
     const candidates = await this.prisma.user.findMany({
       where: {
         id: { notIn: excludedUserIds },
-        ...(neededRoles.length > 0 ? { role: { in: neededRoles as any } } : {}),
       },
       select: {
         id: true,
