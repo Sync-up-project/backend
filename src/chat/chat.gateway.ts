@@ -39,6 +39,7 @@ import { Language } from '@prisma/client';
  */
 interface ChatMessage {
   id: string;              // 메시지 고유 ID
+  senderId: string;        // 발신자 사용자 ID (클라이언트에서 '내 메시지' 구분용)
   username: string;        // 발신자 사용자명
   message: string;         // 메시지 내용
   timestamp: Date;         // 메시지 전송 시간
@@ -64,6 +65,9 @@ interface ChatMessage {
   namespace: '/chat',
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  /** 초기 입장 시 가져올 최신 메시지 개수 (과거는 스크롤 시 추가 로드) */
+  private readonly CHAT_PAGE_SIZE = 30;
+
   /**
    * @WebSocketServer() 데코레이터
    * Socket.IO 서버 인스턴스를 주입받습니다.
@@ -172,41 +176,83 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  private mapDbMessage(msg: {
+    id: string;
+    senderId: string;
+    originalText: string;
+    createdAt: Date;
+    sender: { nickname: string };
+  }): ChatMessage {
+    return {
+      id: msg.id,
+      senderId: msg.senderId,
+      username: msg.sender.nickname,
+      message: msg.originalText,
+      timestamp: msg.createdAt,
+    };
+  }
+
   /**
-   * 데이터베이스에서 메시지 히스토리 로드
-   * 
-   * 프로젝트 채팅방의 최근 100개 메시지를 DB에서 가져와서
-   * 클라이언트가 연결될 때 전송할 수 있도록 포맷팅합니다.
-   * 
-   * @param roomId - 채팅방 ID
-   * @returns Promise<ChatMessage[]> - 포맷팅된 메시지 배열
+   * 채팅방의 최신 메시지 limit개만 조회 (시간 오름차순).
+   * limit+1건 조회해 hasMore 여부를 판단합니다.
    */
-  private async loadMessagesFromDB(roomId: string): Promise<ChatMessage[]> {
+  private async loadLatestMessagesFromDB(
+    roomId: string,
+    limit: number,
+  ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
     try {
-      // Prisma를 사용하여 DB에서 메시지 조회
       const dbMessages = await this.prisma.chatMessage.findMany({
         where: { roomId },
-        orderBy: { createdAt: 'asc' },         // 시간순 정렬
-        take: 100,                              // 최근 100개만
+        orderBy: { createdAt: 'desc' },
+        take: limit + 1,
         include: {
-          sender: {
-            select: {
-              nickname: true,                   // 발신자의 닉네임만 가져오기
-            },
-          },
+          sender: { select: { nickname: true } },
         },
       });
 
-      // DB 형식을 클라이언트가 기대하는 형식으로 변환
-      return dbMessages.map((msg) => ({
-        id: msg.id,
-        username: msg.sender.nickname,
-        message: msg.originalText,
-        timestamp: msg.createdAt,
-      }));
+      const hasMore = dbMessages.length > limit;
+      const slice = hasMore ? dbMessages.slice(0, limit) : dbMessages;
+      const chronological = [...slice].reverse();
+
+      return {
+        messages: chronological.map((msg) => this.mapDbMessage(msg)),
+        hasMore,
+      };
     } catch (error) {
-      console.error('Failed to load messages from DB:', error);
-      return [];
+      console.error('Failed to load latest messages from DB:', error);
+      return { messages: [], hasMore: false };
+    }
+  }
+
+  /**
+   * 주어진 시각 이전의 메시지 limit개 (시간 오름차순).
+   */
+  private async loadOlderMessagesFromDB(
+    roomId: string,
+    before: Date,
+    limit: number,
+  ): Promise<{ messages: ChatMessage[]; hasMore: boolean }> {
+    try {
+      const dbMessages = await this.prisma.chatMessage.findMany({
+        where: { roomId, createdAt: { lt: before } },
+        orderBy: { createdAt: 'desc' },
+        take: limit + 1,
+        include: {
+          sender: { select: { nickname: true } },
+        },
+      });
+
+      const hasMore = dbMessages.length > limit;
+      const slice = hasMore ? dbMessages.slice(0, limit) : dbMessages;
+      const chronological = [...slice].reverse();
+
+      return {
+        messages: chronological.map((msg) => this.mapDbMessage(msg)),
+        hasMore,
+      };
+    } catch (error) {
+      console.error('Failed to load older messages from DB:', error);
+      return { messages: [], hasMore: false };
     }
   }
 
@@ -344,11 +390,49 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // 사용자 입장 알림 브로드캐스트 (해당 프로젝트 채팅방에만)
     client.to(roomName).emit('userJoined', username);
 
-    // 메시지 히스토리 로드 및 전송
-    const messageHistory = await this.loadMessagesFromDB(roomId);
-    client.emit('messageHistory', messageHistory);
+    // 최신 메시지 일부만 로드 (과거는 클라이언트 스크롤 시 loadOlderMessages)
+    const { messages, hasMore } = await this.loadLatestMessagesFromDB(
+      roomId,
+      this.CHAT_PAGE_SIZE,
+    );
+    client.emit('messageHistory', { messages, hasMore });
 
     return { status: 'joined', roomId, username };
+  }
+
+  /**
+   * 스크롤 상단 도달 시 과거 메시지 추가 로드 (ACK로 응답)
+   */
+  @SubscribeMessage('loadOlderMessages')
+  async handleLoadOlderMessages(
+    @MessageBody() data: { beforeCreatedAt: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    const userInfo = this.connectedUsers.get(client.id);
+    if (!userInfo) {
+      return {
+        status: 'error' as const,
+        error: 'You must join a project chat room first.',
+      };
+    }
+
+    const before = new Date(data.beforeCreatedAt);
+    if (Number.isNaN(before.getTime())) {
+      return { status: 'error' as const, error: 'Invalid beforeCreatedAt.' };
+    }
+
+    const roomId = await this.ensureProjectRoom(userInfo.projectId);
+    if (!roomId) {
+      return { status: 'error' as const, error: 'Failed to resolve chat room.' };
+    }
+
+    const { messages, hasMore } = await this.loadOlderMessagesFromDB(
+      roomId,
+      before,
+      this.CHAT_PAGE_SIZE,
+    );
+
+    return { status: 'ok' as const, messages, hasMore };
   }
 
   /**
@@ -419,6 +503,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // DB 메시지를 클라이언트 형식으로 변환
       const chatMessage: ChatMessage = {
         id: dbMessage.id,
+        senderId: dbMessage.senderId,
         username: dbMessage.sender.nickname,
         message: dbMessage.originalText,
         timestamp: dbMessage.createdAt,
