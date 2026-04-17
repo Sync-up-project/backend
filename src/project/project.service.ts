@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { InviteStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfirmProjectDto } from './dto/confirm-project.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -634,8 +635,17 @@ export class ProjectService {
       throw new ForbiddenException('프로젝트 소유자만 추천 유저를 볼 수 있어요.');
     }
 
+    const pendingInviteeIds = await this.prisma.invitation.findMany({
+      where: { projectId, status: InviteStatus.PENDING },
+      select: { inviteeId: true },
+    });
+
     const excludedUserIds = Array.from(
-      new Set([project.ownerId, ...project.members.map(m => m.userId)]),
+      new Set([
+        project.ownerId,
+        ...project.members.map(m => m.userId),
+        ...pendingInviteeIds.map(i => i.inviteeId),
+      ]),
     );
 
     const neededRoles = Array.from(
