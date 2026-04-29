@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import OpenAI from 'openai';
+import { seoulCalendarTodayYyyyMmDd } from '../utils/sanitize-idea-constraint-dates';
 import { AiProvider, ProviderName } from './ai.provider';
 
 export class OpenAiProvider implements AiProvider {
@@ -48,6 +49,7 @@ export class OpenAiProvider implements AiProvider {
     const prompt = renderPrompt('bundle_generate.txt', {
       language: input.language,
       ideaText: input.ideaText,
+      todayIso: seoulCalendarTodayYyyyMmDd(),
     });
 
     // NOTE: Some openai SDK versions don't type `response_format` on Responses API.
@@ -114,6 +116,7 @@ export class OpenAiProvider implements AiProvider {
       language: input.language,
       instruction: input.instruction,
       baseJson: JSON.stringify(input.baseJson),
+      todayIso: seoulCalendarTodayYyyyMmDd(),
     });
 
     const response = await (this.client.responses as any).create({
@@ -409,12 +412,26 @@ const BUNDLE_SCHEMA = {
           additionalProperties: false,
           required: [
             'deadline',
+            'recruit_deadline_iso',
+            'project_end_iso',
+            'suggested_recruit_capacity',
             'team_size_limit',
             'must_use_tech',
             'cannot_use_tech',
           ],
           properties: {
             deadline: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            recruit_deadline_iso: {
+              anyOf: [{ type: 'string' }, { type: 'null' }],
+            },
+            project_end_iso: {
+              anyOf: [{ type: 'string' }, { type: 'null' }],
+            },
+            suggested_recruit_capacity: {
+              type: 'integer',
+              minimum: 2,
+              maximum: 40,
+            },
             team_size_limit: { anyOf: [{ type: 'number' }, { type: 'null' }] },
             must_use_tech: { type: 'array', items: { type: 'string' } },
             cannot_use_tech: { type: 'array', items: { type: 'string' } },

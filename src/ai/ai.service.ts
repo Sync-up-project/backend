@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -22,6 +23,7 @@ import { ClarifyingQuestionsSchema } from './schemas/questions.schema';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { OpenAiProvider } from './providers/openai.provider';
+import { sanitizeIdeaConstraintDatesInPlace } from './utils/sanitize-idea-constraint-dates';
 
 // ✅ 추가: Prisma enum + JSON 타입
 import { Prisma, AiArtifactType } from '@prisma/client';
@@ -98,6 +100,7 @@ export class AiService {
         bundleRaw.ideaNormalized,
         'IdeaNormalized',
       );
+      sanitizeIdeaConstraintDatesInPlace(ideaNormalized);
 
       const screens = this.parseOrThrow(
         ScreenListDraftSchema,
@@ -160,6 +163,7 @@ export class AiService {
       ideaRaw,
       'IdeaNormalized',
     );
+    sanitizeIdeaConstraintDatesInPlace(ideaNormalized);
 
     // B1
     const screensRaw = await this.provider.generateScreens({
@@ -548,6 +552,7 @@ export class AiService {
       bundleRaw.ideaNormalized,
       'IdeaNormalized',
     );
+    sanitizeIdeaConstraintDatesInPlace(ideaNormalized);
     const screens = this.parseOrThrow(
       ScreenListDraftSchema,
       bundleRaw.screens,
@@ -614,6 +619,101 @@ export class AiService {
         savedAt: created.createdAt,
       },
     };
+  }
+
+  /**
+   * 드래프트 contentJson 직접 수정 (프로젝트 미연결·작성자만)
+   */
+  async updateArtifactContent(
+    artifactId: string,
+    userId: string,
+    incomingRoot: unknown,
+  ) {
+    const incoming =
+      incomingRoot &&
+      typeof incomingRoot === 'object' &&
+      'contentJson' in (incomingRoot as object)
+        ? (incomingRoot as any).contentJson
+        : incomingRoot;
+
+    if (!incoming || typeof incoming !== 'object') {
+      throw new BadRequestException({
+        message: 'contentJson 객체가 필요해요.',
+      });
+    }
+
+    const artifact = await this.prisma.aiArtifact.findUnique({
+      where: { id: artifactId },
+      select: {
+        id: true,
+        createdById: true,
+        projectId: true,
+        contentJson: true,
+      } as any,
+    });
+
+    if (!artifact) {
+      throw new NotFoundException({
+        message: 'Artifact not found',
+        id: artifactId,
+      });
+    }
+
+    if (artifact.projectId) {
+      throw new BadRequestException({
+        message:
+          '이미 프로젝트에 연결된 드래프트는 직접 수정할 수 없어요. 새 버전으로 복제하거나 AI 수정을 이용해 주세요.',
+      });
+    }
+
+    if (artifact.createdById && artifact.createdById !== userId) {
+      throw new ForbiddenException({
+        message: '이 드래프트를 수정할 권한이 없어요.',
+      });
+    }
+
+    const prev = (artifact.contentJson ?? {}) as Record<string, unknown>;
+    const merged = { ...prev, ...(incoming as Record<string, unknown>) };
+
+    const ideaNormalized = this.parseOrThrow(
+      IdeaNormalizedSchema,
+      merged.ideaNormalized,
+      'IdeaNormalized',
+    );
+    sanitizeIdeaConstraintDatesInPlace(ideaNormalized);
+
+    const screens = this.parseOrThrow(
+      ScreenListDraftSchema,
+      merged.screens,
+      'ScreenListDraft',
+    );
+    const apiSpec = this.parseOrThrow(
+      ApiSpecDraftSchema,
+      merged.apiSpec,
+      'ApiSpecDraft',
+    );
+    const erd = this.parseOrThrow(ErdDraftSchema, merged.erd, 'ErdDraft');
+    const questions = this.parseOrThrow(
+      ClarifyingQuestionsSchema,
+      merged.questions,
+      'ClarifyingQuestions',
+    );
+
+    const nextContent = {
+      ...merged,
+      ideaNormalized,
+      screens,
+      apiSpec,
+      erd,
+      questions,
+    };
+
+    await this.prisma.aiArtifact.update({
+      where: { id: artifactId },
+      data: { contentJson: nextContent as unknown as Prisma.InputJsonValue },
+    });
+
+    return this.getArtifactById(artifactId);
   }
 
   async approveArtifact(artifactId: string, dto: ApproveArtifactDto) {
