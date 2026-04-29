@@ -1,8 +1,22 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
 import { AiService } from './ai.service';
 import { GenerateProjectDto } from './dto/generate-project.dto';
 import { ReviseArtifactDto } from './dto/revise-artifact.dto';
 import { ApproveArtifactDto } from './dto/approve-artifact.dto';
+import { UpdateArtifactContentDto } from './dto/update-artifact-content.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @Controller('ai')
 export class AiController {
@@ -55,6 +69,17 @@ export class AiController {
     @Body() dto: ReviseArtifactDto,
   ) {
     return this.aiService.reviseArtifact(id, dto);
+  }
+
+  @Patch('artifacts/:id/content')
+  @UseGuards(JwtAuthGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  async updateArtifactContent(
+    @Param('id') id: string,
+    @Body() dto: UpdateArtifactContentDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.aiService.updateArtifactContent(id, user.id, dto.contentJson);
   }
 
   @Post('artifacts/:id/approve')

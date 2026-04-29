@@ -1,0 +1,20 @@
+# 개발 전용 백엔드 이미지.
+# 소스/노드 모듈은 compose 에서 마운트하므로 여기서는 엔트리포인트 스크립트만 굽습니다.
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Prisma + 일부 빌드 도구가 필요로 하는 라이브러리.
+RUN apk add --no-cache libc6-compat openssl tini
+
+COPY docker/entrypoint.dev.sh /usr/local/bin/dev-entrypoint.sh
+RUN chmod +x /usr/local/bin/dev-entrypoint.sh
+
+ENV NODE_ENV=development \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false
+
+EXPOSE 3000 5555
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/dev-entrypoint.sh"]
+CMD ["npx", "nest", "start", "--watch"]

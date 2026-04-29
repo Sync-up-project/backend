@@ -4,3 +4,11 @@ ideaNormalized, screens, apiSpec, erd, questions
 각 값은 JSON 객체/배열이어야 하며 문자열로 감싸지 마라.
 언어: {{language}}
 아이디어: {{ideaText}}
+
+오늘 날짜(서울 캘린더 기준, 이후 일정은 반드시 이 날보다 뒤): {{todayIso}}
+
+ideaNormalized.constraints에는 반드시 다음을 채운다(날짜 없으면 null):
+- recruit_deadline_iso: 모집 마감 제안일, YYYY-MM-DD. 반드시 {{todayIso}} 보다 이후.
+- project_end_iso: 프로젝트 진행 종료 목표일, YYYY-MM-DD. recruit_deadline_iso보다 이후이며 {{todayIso}} 보다 이후.
+- deadline: 레거시 필드로, project_end_iso와 동일한 날짜 문자열을 넣거나 null.
+- suggested_recruit_capacity: 정수 2~40. features 수·역할 수·복잡도(complexity_triggers)·ERD 엔티티 수를 반영해 프로젝트 규모에 맞는 전체 모집 인원(정원)을 제안한다. 소규모 MVP는 3~6, 중간은 6~12, 대규모·다수 외부연동은 12~24 등 현실적인 값.

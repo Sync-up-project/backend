@@ -69,6 +69,12 @@ export const IdeaNormalizedSchema = z.object({
   assumptions: z.array(z.string()).default([]),
   constraints: z.object({
     deadline: z.string().nullable().default(null),
+    /** 모집 마감 제안일 (YYYY-MM-DD 또는 ISO 날짜 문자열) */
+    recruit_deadline_iso: z.string().nullable().default(null),
+    /** 프로젝트 종료 목표일 제안 (YYYY-MM-DD 또는 ISO 날짜 문자열) */
+    project_end_iso: z.string().nullable().default(null),
+    /** 확정 시 프로젝트 모집 정원(capacity) 제안, 2~40 정수 (구버전 아티팩트는 생략 가능) */
+    suggested_recruit_capacity: z.number().int().min(2).max(40).optional().default(4),
     team_size_limit: z.number().nullable().default(null),
     must_use_tech: z.array(z.string()).default([]),
     cannot_use_tech: z.array(z.string()).default([]),

@@ -90,6 +90,9 @@
   ],
   "constraints": {
     "deadline": null,
+    "recruit_deadline_iso": null,
+    "project_end_iso": null,
+    "suggested_recruit_capacity": 6,
     "team_size_limit": null,
     "must_use_tech": [],
     "cannot_use_tech": []

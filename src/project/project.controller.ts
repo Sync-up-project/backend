@@ -1,14 +1,20 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ProjectService } from './project.service';
+import { ProjectParticipationService } from './project-participation.service';
 import { ConfirmProjectDto } from './dto/confirm-project.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import { InviteToProjectDto } from './dto/invite-to-project.dto';
+import { ApplyToProjectDto } from './dto/apply-to-project.dto';
 
 @Controller('projects')
 export class ProjectController {
-  constructor(private readonly projectService: ProjectService) {}
+  constructor(
+    private readonly projectService: ProjectService,
+    private readonly participation: ProjectParticipationService,
+  ) {}
 
   /**
    * ✅ 일반 프로젝트 생성(프론트 폼 기반)
@@ -73,6 +79,43 @@ export class ProjectController {
       String(user?.id ?? ''),
       limit ? Number(limit) : 5,
     );
+  }
+
+  @Get(':id/me-participation')
+  @UseGuards(JwtAuthGuard)
+  async getMyParticipation(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.participation.getMyParticipation(id, String(user?.id ?? ''));
+  }
+
+  @Get(':id/pending-applications')
+  @UseGuards(JwtAuthGuard)
+  async listPendingApplications(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.participation.listPendingApplications(id, String(user?.id ?? ''));
+  }
+
+  @Post(':id/invitations')
+  @UseGuards(JwtAuthGuard)
+  async invite(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: InviteToProjectDto,
+  ) {
+    return this.participation.inviteToProject(
+      id,
+      String(user?.id ?? ''),
+      dto.inviteeId,
+      dto.message,
+    );
+  }
+
+  @Post(':id/applications')
+  @UseGuards(JwtAuthGuard)
+  async apply(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto?: ApplyToProjectDto,
+  ) {
+    return this.participation.applyToProject(id, String(user?.id ?? ''), dto?.message);
   }
 
   /**

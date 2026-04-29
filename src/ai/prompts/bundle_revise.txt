@@ -3,6 +3,10 @@ JSON만 출력. 설명/주석/마크다운 금지.
 ideaNormalized, screens, apiSpec, erd, questions
 각 값은 JSON 객체/배열이어야 하며 문자열로 감싸지 마라.
 
+오늘 날짜(서울 캘린더 기준): {{todayIso}}
+ideaNormalized.constraints 의 날짜 필드는 반드시 이 날 이후(YYYY-MM-DD)여야 한다.
+suggested_recruit_capacity 는 2~40 정수로, 수정된 범위에 맞게 조정할 것.
+
 언어: {{language}}
 수정 지시: {{instruction}}
 

@@ -1,4 +1,14 @@
-import { IsArray, IsDateString, IsEnum, IsObject, IsOptional, IsString } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 
 export enum ProjectModeDto {
   ONLINE = 'ONLINE',
@@ -62,4 +72,11 @@ export class ConfirmProjectDto {
   @IsOptional()
   @IsArray()
   collaborationTools?: string[];
+
+  /** 프로젝트 모집 정원 (미입력 시 서버 기본 1) */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(99)
+  capacity?: number;
 }
