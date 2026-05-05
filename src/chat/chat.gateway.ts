@@ -31,6 +31,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ChatTranslationService } from './chat-translation.service';
 import { Language } from '@prisma/client';
 
 /**
@@ -41,8 +42,24 @@ interface ChatMessage {
   id: string;              // 메시지 고유 ID
   senderId: string;        // 발신자 사용자 ID (클라이언트에서 '내 메시지' 구분용)
   username: string;        // 발신자 사용자명
-  message: string;         // 메시지 내용
+  message: string;         // 원문
+  originalLang: Language;  // 원문 언어 (KO / EN / JA)
+  /** 원문이 아닌 언어로 표시할 때 사용 (클라이언트 표시 언어 선택용) */
+  translations?: Partial<Record<Language, string>>;
   timestamp: Date;         // 메시지 전송 시간
+}
+
+function parseChatSourceLang(input: unknown): Language | null {
+  if (input === Language.KO || input === Language.EN || input === Language.JA) {
+    return input;
+  }
+  if (typeof input === 'string') {
+    const u = input.toUpperCase();
+    if (u === 'KO' || u === 'EN' || u === 'JA') {
+      return u as Language;
+    }
+  }
+  return null;
 }
 
 /**
@@ -93,7 +110,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * 생성자
    * PrismaService를 의존성 주입받아 데이터베이스 작업을 수행합니다.
    */
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private chatTranslation: ChatTranslationService,
+  ) {}
 
   /**
    * 클라이언트 연결 처리
@@ -180,14 +200,24 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     id: string;
     senderId: string;
     originalText: string;
+    originalLang: Language;
     createdAt: Date;
-    sender: { nickname: string };
+    sender: { nickname: string | null };
+    i18n?: { targetLang: Language; translatedText: string }[];
   }): ChatMessage {
+    const translations: Partial<Record<Language, string>> = {};
+    for (const row of msg.i18n ?? []) {
+      translations[row.targetLang] = row.translatedText;
+    }
+
     return {
       id: msg.id,
       senderId: msg.senderId,
-      username: msg.sender.nickname,
+      username: msg.sender.nickname ?? 'User',
       message: msg.originalText,
+      originalLang: msg.originalLang,
+      translations:
+        Object.keys(translations).length > 0 ? translations : undefined,
       timestamp: msg.createdAt,
     };
   }
@@ -207,6 +237,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         take: limit + 1,
         include: {
           sender: { select: { nickname: true } },
+          i18n: { select: { targetLang: true, translatedText: true } },
         },
       });
 
@@ -239,6 +270,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         take: limit + 1,
         include: {
           sender: { select: { nickname: true } },
+          i18n: { select: { targetLang: true, translatedText: true } },
         },
       });
 
@@ -456,7 +488,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
    */
   @SubscribeMessage('message')
   async handleMessage(
-    @MessageBody() data: { message: string },
+    @MessageBody()
+    data: { message: string; sourceLang?: Language | string },
     @ConnectedSocket() client: Socket,
   ) {
     const { message } = data;
@@ -471,6 +504,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     const { userId, username, projectId } = userInfo;
+
+    let originalLang = parseChatSourceLang(data.sourceLang);
+    if (!originalLang) {
+      const profile = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { primaryLanguage: true },
+      });
+      originalLang = profile?.primaryLanguage ?? Language.KO;
+    }
 
     // 프로젝트 채팅방 확인 및 생성
     const roomId = await this.ensureProjectRoom(projectId);
@@ -489,7 +531,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           roomId,
           senderId: userId,
           originalText: message,
-          originalLang: Language.KO, // 기본 언어는 한국어
+          originalLang,
         },
         include: {
           sender: {
@@ -500,12 +542,32 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         },
       });
 
+      const translated = await this.chatTranslation.translateMessage(
+        message,
+        originalLang,
+      );
+
+      if (Object.keys(translated).length > 0) {
+        await this.prisma.chatMessageI18n.createMany({
+          data: Object.entries(translated).map(([targetLang, translatedText]) => ({
+            messageId: dbMessage.id,
+            targetLang: targetLang as Language,
+            translatedText,
+          })),
+        });
+      }
+
+      const translationsOut: Partial<Record<Language, string>> | undefined =
+        Object.keys(translated).length > 0 ? translated : undefined;
+
       // DB 메시지를 클라이언트 형식으로 변환
       const chatMessage: ChatMessage = {
         id: dbMessage.id,
         senderId: dbMessage.senderId,
-        username: dbMessage.sender.nickname,
+        username: dbMessage.sender.nickname ?? 'User',
         message: dbMessage.originalText,
+        originalLang: dbMessage.originalLang,
+        translations: translationsOut,
         timestamp: dbMessage.createdAt,
       };
 

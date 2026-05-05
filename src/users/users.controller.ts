@@ -7,6 +7,8 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 type UpdateMeDto = {
   nickname?: string;
   profileImageUrl?: string;
+  /** Prisma Language: KO | EN | JA */
+  primaryLanguage?: 'KO' | 'EN' | 'JA';
 };
 
 type CurrentUserShape = {
