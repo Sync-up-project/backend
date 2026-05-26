@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Request } from 'express';
 import * as bcrypt from 'bcryptjs';
+import { AuthProvider } from '@prisma/client';
 
 type LocalSignupInput = {
   email: string;
@@ -125,6 +126,101 @@ export class AuthService {
     const expiresIn = this.parseExpiresToSeconds(process.env.JWT_ACCESS_EXPIRES_IN || '15m');
 
     return { accessToken, expiresIn };
+  }
+
+  /**
+   * ✅ GitHub OAuth 로그인/회원가입
+   * - OAuthAccount(provider+providerUserId) 기준으로 연결된 user를 찾거나 생성합니다.
+   * - email은 GitHub에서 없을 수 있어 nullable을 허용합니다.
+   */
+  async loginGithub(
+    githubUser: {
+      githubId?: string | number;
+      username?: string | null;
+      email?: string | null;
+      avatarUrl?: string | null;
+    },
+    req: Request,
+  ) {
+    const providerUserId = githubUser?.githubId ? String(githubUser.githubId) : '';
+    if (!providerUserId) throw new BadRequestException('Invalid GitHub profile');
+
+    const username = githubUser?.username ? String(githubUser.username) : null;
+    const emailRaw = githubUser?.email ? String(githubUser.email).trim().toLowerCase() : null;
+    const avatarUrl = githubUser?.avatarUrl ? String(githubUser.avatarUrl) : null;
+
+    const oauth = await this.prisma.oAuthAccount.findUnique({
+      where: {
+        provider_providerUserId: {
+          provider: AuthProvider.GITHUB,
+          providerUserId,
+        },
+      },
+      select: { userId: true },
+    });
+
+    let userId = oauth?.userId ?? null;
+
+    // OAuthAccount가 없고 email이 있는 경우: 기존 유저(email)와 연결 시도
+    if (!userId && emailRaw) {
+      const byEmail = await this.prisma.user.findUnique({
+        where: { email: emailRaw },
+        select: { id: true },
+      });
+      userId = byEmail?.id ?? null;
+    }
+
+    const user = userId
+      ? await this.prisma.user.update({
+          where: { id: userId },
+          data: {
+            githubUsername: username ?? undefined,
+            githubUrl: username ? `https://github.com/${username}` : undefined,
+            profileImageUrl: avatarUrl ?? undefined,
+            email: emailRaw ?? undefined,
+            nickname: username ?? undefined,
+          },
+          select: { id: true, email: true, nickname: true, role: true, profileImageUrl: true },
+        })
+      : await this.prisma.user.create({
+          data: {
+            email: emailRaw,
+            passwordHash: null,
+            nickname: username,
+            profileImageUrl: avatarUrl,
+            githubUsername: username,
+            githubUrl: username ? `https://github.com/${username}` : null,
+          },
+          select: { id: true, email: true, nickname: true, role: true, profileImageUrl: true },
+        });
+
+    await this.prisma.oAuthAccount.upsert({
+      where: {
+        provider_providerUserId: {
+          provider: AuthProvider.GITHUB,
+          providerUserId,
+        },
+      },
+      update: {
+        userId: user.id,
+        username: username ?? undefined,
+        revokedAt: null,
+      },
+      create: {
+        userId: user.id,
+        provider: AuthProvider.GITHUB,
+        providerUserId,
+        username: username ?? undefined,
+      },
+      select: { id: true },
+    });
+
+    const tokens = await this.issueTokensForUserId(user.id, req);
+
+    return {
+      ...tokens,
+      user,
+    };
   }
 
   async revokeRefreshSession(refreshToken: string) {

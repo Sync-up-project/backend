@@ -140,6 +140,253 @@ async function wipeDatabase() {
   await prisma.user.deleteMany();
 }
 
+async function safeSeedSchedulingDemo() {
+  console.log("🧪 안전 시드 모드: 기존 데이터는 유지하고, 데모용 '재고관리 프로젝트'와 작업 데이터만 upsert 합니다.");
+
+  const passwordHash = await hashPassword("password123");
+
+  const demoUsers = [
+    { email: "hb-kwon@example.com", nickname: "HB-Kwon", role: UserRole.DEV },
+    { email: "sakura@example.com", nickname: "Sakura", role: UserRole.DEV },
+    { email: "minji@example.com", nickname: "Minji", role: UserRole.DESIGN },
+    { email: "yuto@example.com", nickname: "Yuto", role: UserRole.DEV },
+    { email: "hana@example.com", nickname: "Hana", role: UserRole.PLANNER },
+  ] as const;
+
+  const [hb, sakura, minji, yuto, hana] = await Promise.all(
+    demoUsers.map((u) =>
+      prisma.user.upsert({
+        where: { email: u.email },
+        update: {
+          nickname: u.nickname,
+          role: u.role,
+        },
+        create: {
+          email: u.email,
+          passwordHash,
+          nickname: u.nickname,
+          role: u.role,
+          primaryLanguage: Language.KO,
+        },
+      }),
+    ),
+  );
+
+  const existingProject = await prisma.project.findFirst({
+    where: { ownerId: hb.id, titleOriginal: "재고관리 프로젝트" },
+    select: { id: true },
+  });
+
+  const project = existingProject
+    ? await prisma.project.findUniqueOrThrow({ where: { id: existingProject.id } })
+    : await prisma.project.create({
+        data: {
+          ownerId: hb.id,
+          originalLang: Language.KO,
+          titleOriginal: "재고관리 프로젝트",
+          summaryOriginal: "재고 등록/수정/이력 및 관리자 화면까지 포함한 재고관리 서비스 MVP",
+          descriptionOriginal:
+            "스케줄링(작업 단계/진척 관리) 기능을 검증하기 위한 데모 프로젝트입니다. 멤버/상태/진행률/마감 임박/지연 표시를 확인할 수 있어요.",
+          mode: ProjectMode.ONLINE,
+          difficulty: Difficulty.MEDIUM,
+          status: ProjectStatus.IN_PROGRESS,
+          capacity: 5,
+          startDate: new Date(),
+          likeCount: 0,
+          viewCount: 0,
+        },
+      });
+
+  // i18n은 필수가 아니지만 UI에서 참고할 수 있어 생성(이미 있으면 스킵)
+  const i18nCount = await prisma.projectI18n.count({ where: { projectId: project.id } });
+  if (i18nCount === 0) {
+    await Promise.all([
+      prisma.projectI18n.create({
+        data: {
+          projectId: project.id,
+          lang: Language.KO,
+          title: project.titleOriginal,
+          summary: project.summaryOriginal,
+          description: project.descriptionOriginal,
+        },
+      }),
+      prisma.projectI18n.create({
+        data: {
+          projectId: project.id,
+          lang: Language.EN,
+          title: `${project.titleOriginal} (EN)`,
+          summary: `${project.summaryOriginal} (EN)`,
+          description: `${project.descriptionOriginal} (EN)`,
+        },
+      }),
+    ]);
+  }
+
+  // 멤버 연결 (owner는 ProjectMember에 저장하지 않는 구조라 멤버 4명만 연결)
+  await Promise.all([
+    prisma.projectMember.upsert({
+      where: { projectId_userId: { projectId: project.id, userId: sakura.id } },
+      update: { roleInProject: "Backend" },
+      create: { projectId: project.id, userId: sakura.id, roleInProject: "Backend" },
+    }),
+    prisma.projectMember.upsert({
+      where: { projectId_userId: { projectId: project.id, userId: minji.id } },
+      update: { roleInProject: "Designer" },
+      create: { projectId: project.id, userId: minji.id, roleInProject: "Designer" },
+    }),
+    prisma.projectMember.upsert({
+      where: { projectId_userId: { projectId: project.id, userId: yuto.id } },
+      update: { roleInProject: "Fullstack" },
+      create: { projectId: project.id, userId: yuto.id, roleInProject: "Fullstack" },
+    }),
+    prisma.projectMember.upsert({
+      where: { projectId_userId: { projectId: project.id, userId: hana.id } },
+      update: { roleInProject: "QA" },
+      create: { projectId: project.id, userId: hana.id, roleInProject: "QA" },
+    }),
+  ]);
+
+  const now = new Date();
+  const daysFromNow = (days: number) => new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+
+  const taskSeeds = [
+    {
+      title: "요구사항 정리",
+      description: "필수 기능/범위/완료 기준 정리",
+      assignees: [hb.id],
+      status: "DONE",
+      priority: "MEDIUM",
+      progress: 100,
+      startAt: daysFromNow(-10),
+      endAt: daysFromNow(-7),
+      memo: "초안 작성 완료",
+    },
+    {
+      title: "DB 설계",
+      description: "ERD 및 테이블 설계",
+      assignees: [sakura.id],
+      status: "IN_PROGRESS",
+      priority: "HIGH",
+      progress: 60,
+      startAt: daysFromNow(-6),
+      endAt: daysFromNow(2), // due soon
+      memo: "핵심 테이블 우선 설계 중",
+    },
+    {
+      title: "재고 등록 API 구현",
+      description: "POST /inventories 설계 및 구현",
+      assignees: [sakura.id],
+      status: "IN_PROGRESS",
+      priority: "URGENT",
+      progress: 40,
+      startAt: daysFromNow(-4),
+      endAt: daysFromNow(1), // due soon
+      memo: "검증/에러 처리 추가 필요",
+    },
+    {
+      title: "재고 목록 UI 구현",
+      description: "리스트/검색/정렬 UI",
+      assignees: [hb.id],
+      status: "IN_PROGRESS",
+      priority: "HIGH",
+      progress: 50,
+      startAt: daysFromNow(-3),
+      endAt: daysFromNow(5),
+      memo: "기본 레이아웃 완료",
+    },
+    {
+      title: "재고 수정 모달 구현",
+      description: "수정/삭제 플로우 포함",
+      assignees: [hb.id],
+      status: "TODO",
+      priority: "MEDIUM",
+      progress: 0,
+      startAt: daysFromNow(1),
+      endAt: daysFromNow(7),
+      memo: "",
+    },
+    {
+      title: "화면 와이어프레임 정리",
+      description: "관리자 화면 와이어프레임",
+      assignees: [minji.id],
+      status: "DONE",
+      priority: "LOW",
+      progress: 100,
+      startAt: daysFromNow(-8),
+      endAt: daysFromNow(-5),
+      memo: "Figma 링크 공유",
+    },
+    {
+      title: "테스트 케이스 작성",
+      description: "기능별 체크리스트 및 시나리오",
+      assignees: [hana.id],
+      status: "TODO",
+      priority: "MEDIUM",
+      progress: 0,
+      startAt: daysFromNow(0),
+      endAt: daysFromNow(3), // due soon
+      memo: "",
+    },
+    {
+      title: "입출고 이력 기능 구현",
+      description: "이력 조회/필터/엑셀 다운로드(후순위)",
+      assignees: [yuto.id],
+      status: "BLOCKED",
+      priority: "HIGH",
+      progress: 20,
+      startAt: daysFromNow(-2),
+      endAt: daysFromNow(-1), // overdue
+      memo: "API 스펙 확정 대기",
+    },
+  ] as const;
+
+  await prisma.projectCalendarEvent.deleteMany({
+    where: { projectId: project.id, type: "TASK", title: { in: taskSeeds.map((t) => t.title) } },
+  });
+
+  await prisma.projectCalendarEvent.createMany({
+    data: taskSeeds.map((t, idx) => ({
+      projectId: project.id,
+      title: t.title,
+      description: t.description,
+      startAt: t.startAt,
+      endAt: t.endAt,
+      isAllDay: false,
+      type: "TASK",
+      status: t.status,
+      priority: t.priority,
+      progress: t.status === "DONE" ? 100 : t.progress,
+      memo: t.memo || null,
+      completedAt: t.status === "DONE" ? new Date() : null,
+      order: idx + 1,
+      createdById: hb.id,
+    })),
+  });
+
+  const createdTasks = await prisma.projectCalendarEvent.findMany({
+    where: { projectId: project.id, type: "TASK", title: { in: taskSeeds.map((t) => t.title) } },
+    select: { id: true, title: true },
+  });
+  const idByTitle = new Map(createdTasks.map((t) => [t.title, t.id]));
+
+  await prisma.projectCalendarEventAssignee.deleteMany({
+    where: { eventId: { in: createdTasks.map((t) => t.id) } },
+  });
+  await prisma.projectCalendarEventAssignee.createMany({
+    data: taskSeeds.flatMap((t) => {
+      const eventId = idByTitle.get(t.title);
+      if (!eventId) return [];
+      return t.assignees.map((userId) => ({ eventId, userId }));
+    }),
+    skipDuplicates: true,
+  });
+
+  console.log("✅ 안전 시드 완료:");
+  console.log(`   - 프로젝트: ${project.titleOriginal} (${project.id})`);
+  console.log(`   - 작업: ${taskSeeds.length}개`);
+  console.log("   - 팁: 특정 DB로 실행하려면 SEED_LOCAL=true 또는 DATABASE_URL을 설정하세요.");
+}
+
 async function main() {
   console.log("🌱 시드 데이터 생성을 시작합니다...");
 
@@ -147,7 +394,12 @@ async function main() {
   await prisma.$queryRaw`SELECT 1`;
   console.log("✅ DB 연결 확인 완료");
 
-  await wipeDatabase();
+  if (process.env.SEED_WIPE === "true") {
+    await wipeDatabase();
+  } else {
+    await safeSeedSchedulingDemo();
+    return;
+  }
 
   console.log("📚 기술 스택 생성 중...");
   const techStacks = await Promise.all([

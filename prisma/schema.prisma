@@ -763,7 +763,15 @@ model ProjectCalendarEvent {
   startAt     DateTime
   endAt       DateTime
   isAllDay    Boolean  @default(false)
-  status      String   @default("PLANNED") // 간단히 String, 필요하면 enum으로 확장
+  // ✅ 작업 단계/진척 관리용 확장 필드들
+  // - enum으로 바로 바꾸면 기존 데이터/호환성 이슈가 생길 수 있어 String 유지 (DTO/프론트에서 허용 값 제한)
+  type        String   @default("TASK")   // TASK | MEETING | MILESTONE
+  status      String   @default("TODO")   // TODO | IN_PROGRESS | REVIEW | DONE | BLOCKED (+ legacy: PLANNED 등)
+  priority    String   @default("MEDIUM") // LOW | MEDIUM | HIGH | URGENT
+  progress    Int      @default(0)        // 0..100
+  memo        String?
+  completedAt DateTime?
+  order       Int      @default(0)        // 작업 단계 정렬 순서
   createdById String?
 
   createdAt   DateTime @default(now())
@@ -777,6 +785,11 @@ model ProjectCalendarEvent {
   @@index([projectId])
   @@index([startAt])
   @@index([endAt])
+  @@index([type])
+  @@index([status])
+  @@index([priority])
+  @@index([completedAt])
+  @@index([order])
 }
 
 // 캘린더 이벤트 담당자(N:M)

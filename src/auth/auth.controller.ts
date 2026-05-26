@@ -9,8 +9,10 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
+import { GithubAuthGuard } from './guards/github-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
 
@@ -119,5 +121,46 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   async me(@CurrentUser() user: any) {
     return { user };
+  }
+
+  /**
+   * ✅ GitHub OAuth 시작
+   * GET /auth/github?next=/projects
+   */
+  @Get('github')
+  @UseGuards(GithubAuthGuard)
+  async github() {
+    // Guard가 GitHub로 redirect 처리합니다.
+  }
+
+  /**
+   * ✅ GitHub OAuth 콜백
+   * GET /auth/github/callback
+   */
+  @Get('github/callback')
+  @UseGuards(AuthGuard('github'))
+  async githubCallback(@Req() req: Request, @Res() res: Response) {
+    try {
+      const next = (req as any)?.cookies?.oauth_next;
+      const safeNext = typeof next === 'string' && next.startsWith('/') ? next : '/projects';
+
+      const result = await this.authService.loginGithub(req.user as any, req);
+      this.authService.setRefreshCookie(res, result.refreshToken);
+
+      const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const url = new URL(`${frontendBase}/login`);
+      url.searchParams.set('oauth', 'success');
+      url.searchParams.set('next', safeNext);
+      url.searchParams.set('accessToken', result.accessToken);
+
+      res.clearCookie('oauth_next', { path: '/auth/github' });
+      return res.redirect(url.toString());
+    } catch {
+      const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const url = new URL(`${frontendBase}/login`);
+      url.searchParams.set('oauth', 'failed');
+      url.searchParams.set('next', '/projects');
+      return res.redirect(url.toString());
+    }
   }
 }
