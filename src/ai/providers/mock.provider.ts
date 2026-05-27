@@ -95,6 +95,14 @@ export class MockAiProvider implements AiProvider {
     return this.loadFixture(preset, 'questions.json');
   }
 
+  /** 프로젝트 캘린더 초안 (고정 픽스처; 날짜는 서버에서 프로젝트 기간에 맞게 클램프됨) */
+  async generateProjectScheduleDraft(input?: {
+    preset?: MockPresetValue;
+  }): Promise<unknown> {
+    const preset = input?.preset ?? 'medium';
+    return this.loadFixture(preset, 'project-schedule-draft.json');
+  }
+
   /**
    * 아이디어 텍스트에서 간단한 제목 파생
    */

@@ -11,6 +11,7 @@ import {
   MockPreset,
   OpenAiBundleModel,
 } from './dto/generate-project.dto';
+import { GenerateScheduleDraftDto } from './dto/generate-schedule-draft.dto';
 import { ReviseArtifactDto } from './dto/revise-artifact.dto';
 import { ApproveArtifactDto } from './dto/approve-artifact.dto';
 import { AiProvider } from './providers/ai.provider';
@@ -21,10 +22,16 @@ import { ScreenListDraftSchema } from './schemas/screen-list.schema';
 import { ApiSpecDraftSchema } from './schemas/api-spec.schema';
 import { ErdDraftSchema } from './schemas/erd.schema';
 import { ClarifyingQuestionsSchema } from './schemas/questions.schema';
+import { ProjectScheduleDraftSchema } from './schemas/project-schedule-draft.schema';
+import type { ProjectScheduleDraftParsed } from './schemas/project-schedule-draft.schema';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { OpenAiProvider } from './providers/openai.provider';
 import { sanitizeIdeaConstraintDatesInPlace } from './utils/sanitize-idea-constraint-dates';
+import {
+  clampScheduleDraftEventDates,
+  computeScheduleWindow,
+} from './utils/clamp-schedule-draft-events';
 
 // ✅ 추가: Prisma enum + JSON 타입
 import { Prisma, AiArtifactType } from '@prisma/client';
@@ -36,6 +43,24 @@ function resolveOpenAiBundleModel(dto: GenerateProjectDto): string {
   if (fromDto != null && allowed.has(fromDto)) return fromDto;
   const env = process.env.OPENAI_MODEL ?? OpenAiBundleModel.GPT_41_MINI;
   return allowed.has(env) ? env : OpenAiBundleModel.GPT_41_MINI;
+}
+
+function resolveOpenAiScheduleModel(dto: GenerateScheduleDraftDto): string {
+  const allowed = new Set<string>(Object.values(OpenAiBundleModel));
+  const fromDto = dto.openAiModel;
+  if (fromDto != null && allowed.has(fromDto)) return fromDto;
+  const env = process.env.OPENAI_MODEL ?? OpenAiBundleModel.GPT_41_MINI;
+  return allowed.has(env) ? env : OpenAiBundleModel.GPT_41_MINI;
+}
+
+function scheduleArtifactSnippet(value: unknown, maxLen: number): string {
+  try {
+    const s = typeof value === 'string' ? value : JSON.stringify(value);
+    if (s.length <= maxLen) return s;
+    return `${s.slice(0, maxLen)}…`;
+  } catch {
+    return '';
+  }
 }
 
 @Injectable()
@@ -289,6 +314,197 @@ export class AiService {
     }
 
     return { jobId, status: 'done' as const, result: job.result };
+  }
+
+  /**
+   * ✅ AI 기반 프로젝트 일정 초안(JSON). 멤버/오너만 호출. DB에는 저장하지 않습니다.
+   */
+  async generateProjectScheduleDraft(
+    projectId: string,
+    userId: string,
+    dto: GenerateScheduleDraftDto,
+  ) {
+    if (!userId) {
+      throw new ForbiddenException('로그인이 필요합니다.');
+    }
+
+    const access = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true, ownerId: true },
+    });
+    if (!access) {
+      throw new NotFoundException('프로젝트를 찾을 수 없어요.');
+    }
+
+    let isAllowed = access.ownerId === userId;
+    if (!isAllowed) {
+      const member = await this.prisma.projectMember.findUnique({
+        where: { projectId_userId: { projectId, userId } },
+        select: { id: true },
+      });
+      isAllowed = Boolean(member);
+    }
+    if (!isAllowed) {
+      throw new ForbiddenException('프로젝트 멤버만 일정 초안을 생성할 수 있어요.');
+    }
+
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        id: true,
+        titleOriginal: true,
+        summaryOriginal: true,
+        descriptionOriginal: true,
+        mode: true,
+        difficulty: true,
+        status: true,
+        capacity: true,
+        deadline: true,
+        startDate: true,
+        endDate: true,
+        createdAt: true,
+        techStacks: { select: { techStack: { select: { name: true } } } },
+      },
+    });
+    if (!project) {
+      throw new NotFoundException('프로젝트를 찾을 수 없어요.');
+    }
+
+    const { windowStart, windowEnd } = computeScheduleWindow({
+      startDate: project.startDate,
+      endDate: project.endDate,
+      deadline: project.deadline,
+      createdAt: project.createdAt,
+    });
+
+    const artifacts = await this.prisma.aiArtifact.findMany({
+      where: { projectId },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+      select: { type: true, title: true, contentJson: true },
+    });
+
+    const projectFacts = JSON.stringify(
+      {
+        title: project.titleOriginal,
+        summary: project.summaryOriginal,
+        description: project.descriptionOriginal?.slice(0, 4000),
+        mode: project.mode,
+        difficulty: project.difficulty,
+        status: project.status,
+        capacity: project.capacity,
+        deadline: project.deadline,
+        startDate: project.startDate,
+        endDate: project.endDate,
+        techStacks: project.techStacks.map(ts => ts.techStack.name),
+        scheduleWindow: {
+          start: windowStart.toISOString(),
+          end: windowEnd.toISOString(),
+        },
+      },
+      null,
+      2,
+    );
+
+    let artifactContext = artifacts
+      .map(
+        a =>
+          `\n--- ${String(a.type)} ${a.title ? String(a.title) : ''} ---\n${scheduleArtifactSnippet(
+            a.contentJson,
+            3200,
+          )}\n`,
+      )
+      .join('');
+    if (artifactContext.length > 24000) {
+      artifactContext = `${artifactContext.slice(0, 24000)}\n…(truncated)`;
+    }
+
+    const target = Math.min(30, Math.max(5, dto.maxEvents ?? 15));
+    const maxLo = Math.max(5, target - 4);
+    const maxHi = Math.min(30, target + 6);
+
+    const language = this.mapLang(dto.language ?? AiLanguage.KO);
+
+    let raw: unknown;
+    const genSchedule = (this.provider as any).generateProjectScheduleDraft;
+    if (typeof genSchedule !== 'function') {
+      throw new BadRequestException('현재 AI 프로바이더가 일정 초안을 지원하지 않습니다.');
+    }
+
+    if (this.provider.name === 'openai') {
+      const model = resolveOpenAiScheduleModel(dto);
+      raw = await genSchedule.call(this.provider, {
+        language,
+        model,
+        projectFacts,
+        artifactContext,
+        maxEventsTarget: target,
+        maxEventsLo: maxLo,
+        maxEventsHi: maxHi,
+        additionalNotes: dto.additionalNotes ?? '',
+      });
+    } else {
+      raw = await genSchedule.call(this.provider, {});
+    }
+
+    const parsed = this.parseOrThrow<ProjectScheduleDraftParsed>(
+      ProjectScheduleDraftSchema,
+      raw,
+      'ProjectScheduleDraft',
+    );
+
+    let events = parsed.events;
+    if (events.length > target) {
+      events = events.slice(0, target);
+    }
+
+    const normalized = events.map(ev => {
+      const dates = clampScheduleDraftEventDates(
+        { startAt: ev.startAt, endAt: ev.endAt },
+        windowStart,
+        windowEnd,
+      );
+
+      const desc =
+        typeof ev.description === 'string' && ev.description.trim()
+          ? ev.description.trim().slice(0, 4500)
+          : undefined;
+
+      const memo =
+        typeof ev.memo === 'string' && ev.memo.trim()
+          ? ev.memo.trim().slice(0, 4500)
+          : undefined;
+
+      return {
+        title: ev.title.trim().slice(0, 230),
+        description: desc,
+        memo,
+        startAt: dates.startAt,
+        endAt: dates.endAt,
+        type: ev.type,
+        status: 'TODO',
+        priority: ev.priority,
+        progress: 0,
+        isAllDay: Boolean(ev.isAllDay),
+      };
+    });
+
+    normalized.sort(
+      (a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime(),
+    );
+
+    return {
+      meta: {
+        provider: this.provider.name,
+        openAiModel:
+          this.provider.name === 'openai' ? resolveOpenAiScheduleModel(dto) : null,
+        projectId,
+        windowStart: windowStart.toISOString(),
+        windowEnd: windowEnd.toISOString(),
+        count: normalized.length,
+      },
+      events: normalized,
+    };
   }
 
   private mapLang(lang: AiLanguage): 'ko' | 'en' | 'ja' {

@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CalendarEventsService } from './calendar-events.service';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
+import { BulkCreateCalendarEventsDto } from './dto/bulk-create-calendar-events.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 
 @Controller('projects')
@@ -64,6 +65,16 @@ export class CalendarEventsController {
     @Body() dto: CreateCalendarEventDto,
   ) {
     return this.calendarEvents.create(projectId, String(user?.id ?? ''), dto);
+  }
+
+  @Post(':id/calendar-events/bulk')
+  @UseGuards(JwtAuthGuard)
+  async createBulk(
+    @Param('id') projectId: string,
+    @CurrentUser() user: any,
+    @Body() dto: BulkCreateCalendarEventsDto,
+  ) {
+    return this.calendarEvents.createBulk(projectId, String(user?.id ?? ''), dto.events);
   }
 
   @Patch(':id/calendar-events/:eventId')

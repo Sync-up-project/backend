@@ -1,0 +1,149 @@
+{
+  "schema_version": "1.0",
+  "events": [
+    {
+      "title": "킥오프 및 범위 합의",
+      "description": "목표, 범위, 일정 전제 합의. 리스크/의존성 공유.",
+      "memo": "",
+      "startAt": "2030-01-02T02:00:00.000Z",
+      "endAt": "2030-01-02T03:30:00.000Z",
+      "type": "MEETING",
+      "status": "TODO",
+      "priority": "HIGH",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "상세 요구사항 및 유저 스토리 정리",
+      "description": "MVP 기능 정의 및 인수조건 작성.",
+      "memo": "",
+      "startAt": "2030-01-03T01:00:00.000Z",
+      "endAt": "2030-01-05T06:00:00.000Z",
+      "type": "TASK",
+      "status": "TODO",
+      "priority": "HIGH",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "화면 설계 및 IA",
+      "description": "핵심 화면 플로우/와이어 수준 정보구조 확정.",
+      "memo": "",
+      "startAt": "2030-01-05T06:30:00.000Z",
+      "endAt": "2030-01-07T06:00:00.000Z",
+      "type": "TASK",
+      "status": "TODO",
+      "priority": "MEDIUM",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "데이터 모델·API 계약 스케치",
+      "description": "엔티티 관계 및 주요 엔드포인트 계약 초안.",
+      "memo": "",
+      "startAt": "2030-01-07T06:30:00.000Z",
+      "endAt": "2030-01-10T06:00:00.000Z",
+      "type": "TASK",
+      "status": "TODO",
+      "priority": "HIGH",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "알파 구현 (핵심 플로우)",
+      "description": "로그인/핵심 CRUD/핵심 조회 등 메인 유저 플로우.",
+      "memo": "",
+      "startAt": "2030-01-10T06:30:00.000Z",
+      "endAt": "2030-01-18T06:00:00.000Z",
+      "type": "TASK",
+      "status": "TODO",
+      "priority": "HIGH",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "알파 리뷰 미팅",
+      "description": "데모 기반 피드백 수집 및 범위 조정.",
+      "memo": "",
+      "startAt": "2030-01-18T07:00:00.000Z",
+      "endAt": "2030-01-18T08:00:00.000Z",
+      "type": "MEETING",
+      "status": "TODO",
+      "priority": "MEDIUM",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "알파 마일스톤",
+      "description": "핵심 플로우 동작 데모 가능 상태.",
+      "memo": "",
+      "startAt": "2030-01-18T06:00:00.000Z",
+      "endAt": "2030-01-18T06:30:00.000Z",
+      "type": "MILESTONE",
+      "status": "TODO",
+      "priority": "HIGH",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "품질 강화 (리팩터·에러 처리·로깅)",
+      "description": "예외 플로우, 관측성, 성능 병목 1차 정리.",
+      "memo": "",
+      "startAt": "2030-01-19T01:00:00.000Z",
+      "endAt": "2030-01-22T06:00:00.000Z",
+      "type": "TASK",
+      "status": "TODO",
+      "priority": "MEDIUM",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "테스트·스테이징 검증",
+      "description": "테스트 시나리오 기반 검증 및 회귀.",
+      "memo": "",
+      "startAt": "2030-01-22T06:30:00.000Z",
+      "endAt": "2030-01-25T06:00:00.000Z",
+      "type": "TASK",
+      "status": "TODO",
+      "priority": "HIGH",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "베타 마일스톤",
+      "description": "스테이징 기준 합격. 베타 배포 후보.",
+      "memo": "",
+      "startAt": "2030-01-25T06:00:00.000Z",
+      "endAt": "2030-01-25T06:30:00.000Z",
+      "type": "MILESTONE",
+      "status": "TODO",
+      "priority": "HIGH",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "출시 준비 (문서·배포·모니터링)",
+      "description": "운영 체크리스트, 알림 구성, 릴리즈 노트.",
+      "memo": "",
+      "startAt": "2030-01-26T01:00:00.000Z",
+      "endAt": "2030-01-28T06:00:00.000Z",
+      "type": "TASK",
+      "status": "TODO",
+      "priority": "URGENT",
+      "progress": 0,
+      "isAllDay": false
+    },
+    {
+      "title": "런치 마일스톤",
+      "description": "프로덕션 롤아웃.",
+      "memo": "",
+      "startAt": "2030-01-29T06:00:00.000Z",
+      "endAt": "2030-01-29T06:30:00.000Z",
+      "type": "MILESTONE",
+      "status": "TODO",
+      "priority": "URGENT",
+      "progress": 0,
+      "isAllDay": false
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import * as path from 'path';
 import OpenAI from 'openai';
 import { seoulCalendarTodayYyyyMmDd } from '../utils/sanitize-idea-constraint-dates';
 import { AiProvider, ProviderName } from './ai.provider';
+import { PROJECT_SCHEDULE_DRAFT_SCHEMA } from './openai-schedule-draft.schema';
 
 export class OpenAiProvider implements AiProvider {
   readonly name: ProviderName = 'openai';
@@ -107,6 +108,72 @@ export class OpenAiProvider implements AiProvider {
     ] as const;
     for (const k of keys) {
       parsed[k] = parseMaybeJson(parsed[k], k);
+    }
+
+    return parsed;
+  }
+
+  async generateProjectScheduleDraft(input: {
+    language: 'ko' | 'en' | 'ja';
+    model?: string;
+    projectFacts: string;
+    artifactContext: string;
+    maxEventsTarget: number;
+    maxEventsLo: number;
+    maxEventsHi: number;
+    additionalNotes: string;
+  }) {
+    const model =
+      input.model?.trim() ||
+      process.env.OPENAI_MODEL ||
+      'gpt-4.1-mini';
+
+    const langLabel =
+      input.language === 'ko' ? 'Korean' : input.language === 'ja' ? 'Japanese' : 'English';
+
+    const prompt = renderPrompt('project_schedule_generate.txt', {
+      language: langLabel,
+      todayIso: seoulCalendarTodayYyyyMmDd(),
+      projectFacts: input.projectFacts,
+      artifactContext: input.artifactContext || '(none)',
+      maxEventsLo: String(input.maxEventsLo),
+      maxEventsHi: String(input.maxEventsHi),
+      maxEventsTarget: String(input.maxEventsTarget),
+      additionalNotes: input.additionalNotes?.trim() || '(none)',
+    });
+
+    const response = await (this.client.responses as any).create({
+      model,
+      input: prompt,
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'project_schedule_draft_v1',
+          strict: true,
+          schema: PROJECT_SCHEDULE_DRAFT_SCHEMA,
+        },
+      },
+      temperature: 0,
+    } as any);
+
+    const text = (response as any).output_text ?? '';
+    const raw = (text || extractOutputText(response) || '').trim();
+
+    if (!raw) {
+      throw new Error('OpenAiProvider: empty schedule draft output');
+    }
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      const extracted = extractJsonObject(raw);
+      if (!extracted) {
+        throw new Error(
+          `OpenAiProvider: schedule output is not valid JSON. sample=${raw.slice(0, 200)}`,
+        );
+      }
+      parsed = JSON.parse(extracted);
     }
 
     return parsed;

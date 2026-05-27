@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { AiService } from './ai.service';
 import { GenerateProjectDto } from './dto/generate-project.dto';
+import { GenerateScheduleDraftDto } from './dto/generate-schedule-draft.dto';
 import { ReviseArtifactDto } from './dto/revise-artifact.dto';
 import { ApproveArtifactDto } from './dto/approve-artifact.dto';
 import { UpdateArtifactContentDto } from './dto/update-artifact-content.dto';
@@ -32,6 +33,21 @@ export class AiController {
   @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async generateAsync(@Body() dto: GenerateProjectDto) {
     return this.aiService.createGenerateJob(dto);
+  }
+
+  @Post('projects/:projectId/schedule-draft')
+  @UseGuards(JwtAuthGuard)
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  async generateScheduleDraft(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: { id: string },
+    @Body() dto: GenerateScheduleDraftDto,
+  ) {
+    return this.aiService.generateProjectScheduleDraft(
+      projectId,
+      String(user?.id ?? ''),
+      dto,
+    );
   }
 
   @Get('project/generate-status/:jobId')

@@ -249,6 +249,108 @@ export class CalendarEventsService {
     return { event };
   }
 
+  async createBulk(projectId: string, userId: string, dtos: CreateCalendarEventDto[]) {
+    const project = await this.assertProjectAndAccess(projectId, userId);
+
+    if (!dtos.length) {
+      throw new BadRequestException('이벤트가 비어 있습니다.');
+    }
+    if (dtos.length > 40) {
+      throw new BadRequestException('한 번에 최대 40건까지 등록할 수 있어요.');
+    }
+
+    const last = await this.prisma.projectCalendarEvent.findFirst({
+      where: { projectId },
+      orderBy: { order: 'desc' },
+      select: { order: true },
+    });
+    let nextOrder = last?.order ?? 0;
+
+    const rows = await this.prisma.$transaction(async tx => {
+      const createdList: Array<Record<string, unknown>> = [];
+      for (const dto of dtos) {
+        nextOrder += 1;
+
+        const startAt = this.parseDateOrThrow(dto.startAt, 'startAt');
+        const endAt = this.parseDateOrThrow(dto.endAt, 'endAt');
+        if (startAt.getTime() > endAt.getTime()) {
+          throw new BadRequestException('startAt must be before or equal to endAt');
+        }
+
+        const assigneeIds = Array.from(
+          new Set((dto.assigneeIds ?? []).map(v => v.trim()).filter(Boolean)),
+        );
+        await this.assertAssigneesAreMembersOrOwner(projectId, project.ownerId, assigneeIds);
+
+        const type = dto.type?.trim() ? this.norm(dto.type) : 'TASK';
+        const status = dto.status?.trim() ? this.norm(dto.status) : 'TODO';
+        const priority = dto.priority?.trim() ? this.norm(dto.priority) : 'MEDIUM';
+        const progress =
+          dto.progress === undefined || dto.progress === null ? 0 : Number(dto.progress);
+        if (!Number.isFinite(progress) || progress < 0 || progress > 100) {
+          throw new BadRequestException('progress must be between 0 and 100');
+        }
+        const memo =
+          dto.memo === undefined ? undefined : dto.memo?.trim() ? dto.memo.trim() : null;
+
+        const done = this.isDoneStatus(status);
+        const event = await tx.projectCalendarEvent
+          .create({
+            data: {
+              projectId,
+              title: dto.title.trim(),
+              description: dto.description?.trim() ? dto.description.trim() : null,
+              startAt,
+              endAt,
+              isAllDay: dto.isAllDay ?? false,
+              type,
+              status,
+              priority,
+              progress: done ? 100 : progress,
+              memo,
+              completedAt: done ? new Date() : null,
+              order: nextOrder,
+              createdById: userId,
+              assignees: assigneeIds.length
+                ? {
+                    create: assigneeIds.map(uid => ({
+                      userId: uid,
+                    })),
+                  }
+                : undefined,
+            },
+            include: {
+              createdBy: { select: { id: true, nickname: true, profileImageUrl: true } },
+              assignees: {
+                include: {
+                  user: { select: { id: true, nickname: true, profileImageUrl: true } },
+                },
+              },
+            },
+          })
+          .catch((e: unknown) => this.rethrowSchemaMismatchIfNeeded(e));
+        createdList.push(event);
+      }
+      return createdList;
+    });
+
+    const now = new Date();
+    const dueSoonCutoff = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+    const enriched = rows.map((e: any) => {
+      const done = this.isDoneStatus(e.status) || Boolean(e.completedAt);
+      const end = new Date(e.endAt);
+      const overdue = !done && !Number.isNaN(end.getTime()) && end.getTime() < now.getTime();
+      const dueSoon =
+        !done &&
+        !Number.isNaN(end.getTime()) &&
+        end.getTime() >= now.getTime() &&
+        end.getTime() <= dueSoonCutoff.getTime();
+      return { ...e, isCompleted: done, overdue, dueSoon };
+    });
+
+    return { events: enriched, created: enriched.length };
+  }
+
   async update(
     projectId: string,
     eventId: string,
