@@ -7,7 +7,6 @@ import { AiProvider, ProviderName } from './ai.provider';
 export class OpenAiProvider implements AiProvider {
   readonly name: ProviderName = 'openai';
   private client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-  private model = process.env.OPENAI_MODEL ?? 'gpt-4.1-mini';
 
   // NOTE: We do not use the stepwise methods for LLM in MVP.
   // AiService will call generateBundle() once and validate with Zod.
@@ -45,7 +44,13 @@ export class OpenAiProvider implements AiProvider {
   async generateBundle(input: {
     ideaText: string;
     language: 'ko' | 'en' | 'ja';
+    /** 서버에서 화이트리스트 검증 후 전달. 미전달 시 env 기본값 */
+    model?: string;
   }) {
+    const model =
+      input.model?.trim() ||
+      process.env.OPENAI_MODEL ||
+      'gpt-4.1-mini';
     const prompt = renderPrompt('bundle_generate.txt', {
       language: input.language,
       ideaText: input.ideaText,
@@ -55,7 +60,7 @@ export class OpenAiProvider implements AiProvider {
     // NOTE: Some openai SDK versions don't type `response_format` on Responses API.
     // We still pass it at runtime and cast to any to avoid TS overload errors.
     const response = await (this.client.responses as any).create({
-      model: this.model,
+      model,
       input: prompt,
       text: {
         format: {
@@ -111,7 +116,12 @@ export class OpenAiProvider implements AiProvider {
     language: 'ko' | 'en' | 'ja';
     instruction: string;
     baseJson: unknown;
+    model?: string;
   }) {
+    const model =
+      input.model?.trim() ||
+      process.env.OPENAI_MODEL ||
+      'gpt-4.1-mini';
     const prompt = renderPrompt('bundle_revise.txt', {
       language: input.language,
       instruction: input.instruction,
@@ -120,7 +130,7 @@ export class OpenAiProvider implements AiProvider {
     });
 
     const response = await (this.client.responses as any).create({
-      model: this.model,
+      model,
       input: prompt,
       text: {
         format: {

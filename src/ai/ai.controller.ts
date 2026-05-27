@@ -23,11 +23,13 @@ export class AiController {
   constructor(private readonly aiService: AiService) {}
 
   @Post('project/generate')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async generate(@Body() dto: GenerateProjectDto) {
     return this.aiService.generateProject(dto);
   }
 
   @Post('project/generate-async')
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
   async generateAsync(@Body() dto: GenerateProjectDto) {
     return this.aiService.createGenerateJob(dto);
   }

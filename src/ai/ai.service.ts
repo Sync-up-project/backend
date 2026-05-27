@@ -9,6 +9,7 @@ import {
   GenerateProjectDto,
   AiLanguage,
   MockPreset,
+  OpenAiBundleModel,
 } from './dto/generate-project.dto';
 import { ReviseArtifactDto } from './dto/revise-artifact.dto';
 import { ApproveArtifactDto } from './dto/approve-artifact.dto';
@@ -27,6 +28,15 @@ import { sanitizeIdeaConstraintDatesInPlace } from './utils/sanitize-idea-constr
 
 // ✅ 추가: Prisma enum + JSON 타입
 import { Prisma, AiArtifactType } from '@prisma/client';
+
+/** 번들 생성에 쓸 OpenAI 모델 (화이트리스트 + env 폴백). 클래스 메서드가 아니라 모듈 함수로 두어 this 바인딩·구 빌드 불일치를 피함 */
+function resolveOpenAiBundleModel(dto: GenerateProjectDto): string {
+  const allowed = new Set<string>(Object.values(OpenAiBundleModel));
+  const fromDto = dto.openAiModel;
+  if (fromDto != null && allowed.has(fromDto)) return fromDto;
+  const env = process.env.OPENAI_MODEL ?? OpenAiBundleModel.GPT_41_MINI;
+  return allowed.has(env) ? env : OpenAiBundleModel.GPT_41_MINI;
+}
 
 @Injectable()
 export class AiService {
@@ -72,12 +82,14 @@ export class AiService {
       });
       createdById = foundUser?.id ?? null;
     }
+    const bundleModel = resolveOpenAiBundleModel(dto);
     const cacheKey = this.cacheEnabled
       ? this.buildCacheKey({
           provider: this.provider.name,
           language,
           preset,
           ideaText: dto.ideaText,
+          openAiModel: bundleModel,
         })
       : null;
 
@@ -93,6 +105,7 @@ export class AiService {
       const bundleRaw = await (this.provider as any).generateBundle({
         ideaText: dto.ideaText,
         language,
+        model: bundleModel,
       });
 
       const ideaNormalized = this.parseOrThrow(
@@ -132,7 +145,7 @@ export class AiService {
           type: AiArtifactType.OTHER,
           version: 1,
           contentJson: bundleJson,
-          promptHash: `llm:${this.provider.name}:v1`,
+          promptHash: `llm:${this.provider.name}:${bundleModel}:v1`,
         },
         select: { id: true, createdAt: true },
       });
@@ -142,6 +155,7 @@ export class AiService {
         meta: {
           provider: this.provider.name,
           preset,
+          openAiModel: bundleModel,
           artifactId: artifact.id,
           savedAt: artifact.createdAt,
         },
@@ -309,12 +323,14 @@ export class AiService {
     language: string;
     preset: string;
     ideaText: string;
+    openAiModel: string;
   }) {
     const raw = JSON.stringify({
       provider: input.provider,
       language: input.language,
       preset: input.preset,
       ideaText: input.ideaText,
+      openAiModel: input.openAiModel,
     });
     return createHash('sha256').update(raw).digest('hex');
   }

@@ -16,6 +16,12 @@ export enum MockPreset {
   HARD = 'HARD',
 }
 
+/** OpenAI Responses API에 넘길 번들 생성 모델 (화이트리스트) */
+export enum OpenAiBundleModel {
+  GPT_41_MINI = 'gpt-4.1-mini',
+  GPT_41 = 'gpt-4.1',
+}
+
 export class GenerateProjectDto {
   @IsString()
   @MaxLength(20000)
@@ -32,6 +38,11 @@ export class GenerateProjectDto {
   @IsOptional()
   @IsEnum(MockPreset)
   mockPreset?: MockPreset;
+
+  /** 미지정 시 서버 `OPENAI_MODEL` 또는 gpt-4.1-mini */
+  @IsOptional()
+  @IsEnum(OpenAiBundleModel)
+  openAiModel?: OpenAiBundleModel;
 
   @IsOptional()
   @IsString()
