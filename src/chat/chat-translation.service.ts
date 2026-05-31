@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import OpenAI from 'openai';
 import { Language } from '@prisma/client';
+import { AppLogger } from '../common/logger/app-logger.service';
 
 /**
  * 프로젝트 채팅 메시지를 한·영·일 간 번역합니다.
@@ -13,7 +14,8 @@ export class ChatTranslationService {
     process.env.CHAT_TRANSLATION_MAX_CHARS ?? 8000,
   );
 
-  constructor() {
+  constructor(private readonly logger: AppLogger) {
+    this.logger.setContext(ChatTranslationService.name);
     const key = process.env.OPENAI_API_KEY;
     this.client = key ? new OpenAI({ apiKey: key }) : null;
   }
@@ -29,9 +31,10 @@ export class ChatTranslationService {
       return {};
     }
     if (text.length > this.maxChars) {
-      console.warn(
-        'ChatTranslationService: message too long, skipping translation',
-      );
+      this.logger.warn('Message too long, skipping translation', {
+        length: text.length,
+        maxChars: this.maxChars,
+      });
       return {};
     }
 
@@ -87,7 +90,10 @@ For the other two keys, provide natural, accurate translations suitable for live
 
       return out;
     } catch (e) {
-      console.error('ChatTranslationService.translateMessage failed', e);
+      this.logger.error(
+        'translateMessage failed',
+        e instanceof Error ? e.stack : undefined,
+      );
       return {};
     }
   }

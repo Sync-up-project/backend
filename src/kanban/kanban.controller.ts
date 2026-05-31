@@ -6,6 +6,7 @@ import {
   Post,
   Patch,
   Delete,
+  UseGuards,
 } from '@nestjs/common';
 import { KanbanService } from './kanban.service';
 import {
@@ -15,83 +16,102 @@ import {
   RenameColumnDto,
   UpdateCardDto,
 } from './dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 
 @Controller('projects/:projectId/kanban')
+@UseGuards(JwtAuthGuard)
 export class KanbanController {
   constructor(private readonly kanbanService: KanbanService) {}
 
   @Get()
-  async getBoard(@Param('projectId') projectId: string) {
-    return this.kanbanService.getBoard(projectId);
+  async getBoard(
+    @Param('projectId') projectId: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.kanbanService.getBoard(projectId, String(user.id));
   }
 
-  // Confirm 시 자동 생성/보장
   @Post('init')
   async initBoard(
     @Param('projectId') projectId: string,
-    @Body() body: { ownerId?: string },
+    @CurrentUser() user: { id: string },
   ) {
-    return this.kanbanService.ensureBoard(projectId, body?.ownerId ?? null);
+    return this.kanbanService.ensureBoard(projectId, String(user.id));
   }
 
-  // ---- Columns ----
   @Post('columns')
   async createColumn(
     @Param('projectId') projectId: string,
+    @CurrentUser() user: { id: string },
     @Body() dto: CreateColumnDto,
   ) {
-    return this.kanbanService.createColumn(projectId, dto);
+    return this.kanbanService.createColumn(projectId, String(user.id), dto);
   }
 
   @Patch('columns/:columnId')
   async renameColumn(
     @Param('projectId') projectId: string,
     @Param('columnId') columnId: string,
+    @CurrentUser() user: { id: string },
     @Body() dto: RenameColumnDto,
   ) {
-    return this.kanbanService.renameColumn(projectId, columnId, dto);
+    return this.kanbanService.renameColumn(
+      projectId,
+      String(user.id),
+      columnId,
+      dto,
+    );
   }
 
   @Delete('columns/:columnId')
   async deleteColumn(
     @Param('projectId') projectId: string,
     @Param('columnId') columnId: string,
+    @CurrentUser() user: { id: string },
   ) {
-    return this.kanbanService.deleteColumn(projectId, columnId);
+    return this.kanbanService.deleteColumn(projectId, String(user.id), columnId);
   }
 
-  // ---- Cards ----
   @Post('cards')
   async createCard(
     @Param('projectId') projectId: string,
+    @CurrentUser() user: { id: string },
     @Body() dto: CreateCardDto,
   ) {
-    return this.kanbanService.createCard(projectId, dto);
+    return this.kanbanService.createCard(projectId, String(user.id), dto);
   }
 
   @Patch('cards/:cardId')
   async updateCard(
     @Param('projectId') projectId: string,
     @Param('cardId') cardId: string,
+    @CurrentUser() user: { id: string },
     @Body() dto: UpdateCardDto,
   ) {
-    return this.kanbanService.updateCard(projectId, cardId, dto);
+    return this.kanbanService.updateCard(
+      projectId,
+      String(user.id),
+      cardId,
+      dto,
+    );
   }
 
   @Delete('cards/:cardId')
   async deleteCard(
     @Param('projectId') projectId: string,
     @Param('cardId') cardId: string,
+    @CurrentUser() user: { id: string },
   ) {
-    return this.kanbanService.deleteCard(projectId, cardId);
+    return this.kanbanService.deleteCard(projectId, String(user.id), cardId);
   }
 
-  // 카드 이동(드래그앤드롭 핵심)
   @Post('cards/move')
   async moveCard(
     @Param('projectId') projectId: string,
+    @CurrentUser() user: { id: string },
     @Body() dto: MoveCardDto,
   ) {
-    return this.kanbanService.moveCard(projectId, dto);
+    return this.kanbanService.moveCard(projectId, String(user.id), dto);
   }
 }

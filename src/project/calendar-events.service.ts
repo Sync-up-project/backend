@@ -6,6 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProjectAccessService } from '../domain/project/project-access.service';
+import { AppLogger } from '../common/logger/app-logger.service';
 import { CreateCalendarEventDto } from './dto/create-calendar-event.dto';
 import { UpdateCalendarEventDto } from './dto/update-calendar-event.dto';
 
@@ -23,7 +25,13 @@ type FindAllQuery = {
 
 @Injectable()
 export class CalendarEventsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly projectAccess: ProjectAccessService,
+    private readonly logger: AppLogger,
+  ) {
+    this.logger.setContext(CalendarEventsService.name);
+  }
 
   private rethrowSchemaMismatchIfNeeded(err: unknown): never {
     const message = err instanceof Error ? err.message : String(err);
@@ -58,23 +66,7 @@ export class CalendarEventsService {
   }
 
   private async assertProjectAndAccess(projectId: string, userId: string) {
-    if (!userId) throw new ForbiddenException('로그인이 필요합니다.');
-
-    const project = await this.prisma.project.findUnique({
-      where: { id: projectId },
-      select: { id: true, ownerId: true },
-    });
-    if (!project) throw new NotFoundException('프로젝트를 찾을 수 없어요.');
-
-    if (project.ownerId === userId) return project;
-
-    const member = await this.prisma.projectMember.findUnique({
-      where: { projectId_userId: { projectId, userId } },
-      select: { id: true },
-    });
-    if (!member) throw new ForbiddenException('프로젝트 멤버만 접근할 수 있어요.');
-
-    return project;
+    return this.projectAccess.assertMemberOrOwner(projectId, userId);
   }
 
   private async assertAssigneesAreMembersOrOwner(

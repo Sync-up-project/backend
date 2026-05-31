@@ -6,13 +6,17 @@ import {
 } from '@nestjs/common';
 import { InviteStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProjectAccessService } from '../domain/project/project-access.service';
 import { ConfirmProjectDto } from './dto/confirm-project.dto';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 
 @Injectable()
 export class ProjectService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly projectAccess: ProjectAccessService,
+  ) {}
 
   /**
    * ✅ POST /projects
@@ -21,9 +25,9 @@ export class ProjectService {
    * ⚠️ 지금은 인증 연동 전이라 CreateProjectDto.ownerId를 body로 받는 형태를 가정합니다.
    * 나중에 로그인 붙이면 ownerId는 CurrentUser에서 꺼내는 방식으로 바꾸는 게 정석입니다.
    */
-  async createProject(dto: CreateProjectDto) {
-    const ownerId = (dto as any).ownerId;
-    if (!ownerId) throw new BadRequestException('ownerId가 필요해요.');
+  async createProject(dto: CreateProjectDto, userId: string) {
+    if (!userId?.trim()) throw new BadRequestException('로그인이 필요합니다.');
+    const ownerId = userId.trim();
     if (!dto.titleOriginal?.trim())
       throw new BadRequestException('titleOriginal이 필요해요.');
 
@@ -578,7 +582,9 @@ export class ProjectService {
    * - projectId 기준으로 칸반보드 조회
    * - columns/cards는 position 기준 정렬
    */
-  async getKanbanBoard(projectId: string) {
+  async getKanbanBoard(projectId: string, userId: string) {
+    await this.projectAccess.assertMemberOrOwner(projectId, userId);
+
     const board = await this.prisma.kanbanBoard.findUnique({
       where: { projectId },
       include: {
@@ -785,34 +791,29 @@ export class ProjectService {
    * ✅ POST /projects/confirm
    * - artifact 기반 생성
    */
-  async confirmFromArtifact(dto: ConfirmProjectDto) {
+  async confirmFromArtifact(dto: ConfirmProjectDto, userId: string) {
+    if (!userId?.trim()) {
+      throw new BadRequestException('로그인이 필요합니다.');
+    }
+
     const raw: any =
       (dto as any).project ??
       (dto as any).artifact ??
       (dto as any).contentJson ??
       dto;
 
-    const requestedOwnerId = raw.ownerId ?? (dto as any).ownerId ?? null;
     const artifact = dto.artifactId
       ? await this.prisma.aiArtifact.findUnique({
           where: { id: dto.artifactId },
           select: { createdById: true },
         })
       : null;
-    const fallbackOwnerId = artifact?.createdById ?? null;
 
-    let ownerId: string | null = null;
-    for (const candidate of [requestedOwnerId, fallbackOwnerId]) {
-      if (!candidate || typeof candidate !== 'string') continue;
-      const user = await this.prisma.user.findUnique({
-        where: { id: candidate },
-        select: { id: true },
-      });
-      if (user?.id) {
-        ownerId = user.id;
-        break;
-      }
+    if (artifact?.createdById && artifact.createdById !== userId) {
+      throw new BadRequestException('해당 기획서를 확정할 권한이 없습니다.');
     }
+
+    const ownerId = userId.trim();
     const originalLang = raw.originalLang ?? raw.lang ?? 'KO';
     const titleOriginal =
       raw.titleOriginal ?? raw.title ?? raw?.project?.titleOriginal;
@@ -828,11 +829,6 @@ export class ProjectService {
         ? `${descriptionBase}\n\n협업 도구: ${collaborationTools.join(', ')}`
         : descriptionBase;
 
-    if (!ownerId) {
-      throw new BadRequestException(
-        '유효한 ownerId를 찾지 못했어요. 다시 로그인한 뒤 시도해주세요.',
-      );
-    }
     if (!titleOriginal)
       throw new BadRequestException('titleOriginal(title)가 필요해요.');
 

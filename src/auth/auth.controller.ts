@@ -15,6 +15,8 @@ import { AuthService } from './auth.service';
 import { GithubAuthGuard } from './guards/github-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from './decorators/current-user.decorator';
+import { AuthThrottleGuard } from './guards/auth-throttle.guard';
+import { AppLogger } from '../common/logger/app-logger.service';
 
 type SignupBody = {
   email: string;
@@ -29,14 +31,15 @@ type LoginBody = {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly logger: AppLogger,
+  ) {
+    this.logger.setContext(AuthController.name);
+  }
 
-  /**
-   * ✅ 로컬 회원가입
-   * POST /auth/signup
-   * - 성공 시 refresh 쿠키 + accessToken + user 반환
-   */
   @Post('signup')
+  @UseGuards(AuthThrottleGuard)
   async signup(@Body() body: SignupBody, @Req() req: Request, @Res() res: Response) {
     if (!body?.email || !body?.password || !body?.nickname) {
       throw new BadRequestException('email, password, nickname are required');
@@ -59,12 +62,8 @@ export class AuthController {
     });
   }
 
-  /**
-   * ✅ 로컬 로그인
-   * POST /auth/login
-   * - 성공 시 refresh 쿠키 + accessToken + user 반환
-   */
   @Post('login')
+  @UseGuards(AuthThrottleGuard)
   async login(@Body() body: LoginBody, @Req() req: Request, @Res() res: Response) {
     if (!body?.email || !body?.password) {
       throw new BadRequestException('email, password are required');
@@ -86,23 +85,20 @@ export class AuthController {
     });
   }
 
-  /**
-   * Access Token 재발급 (refresh 쿠키 기반)
-   * POST /auth/refresh
-   */
   @Post('refresh')
+  @UseGuards(AuthThrottleGuard)
   async refresh(@Req() req: Request, @Res() res: Response) {
     const refreshToken = this.authService.getRefreshTokenFromCookies(req);
     if (!refreshToken) throw new UnauthorizedException('No refresh token');
 
-    const { accessToken, expiresIn } = await this.authService.rotateAccessToken(refreshToken);
-    return res.status(200).json({ accessToken, expiresIn });
+    const result = await this.authService.rotateAccessToken(refreshToken, req);
+    this.authService.setRefreshCookie(res, result.refreshToken);
+    return res.status(200).json({
+      accessToken: result.accessToken,
+      expiresIn: result.expiresIn,
+    });
   }
 
-  /**
-   * 로그아웃
-   * POST /auth/logout
-   */
   @Post('logout')
   async logout(@Req() req: Request, @Res() res: Response) {
     const refreshToken = this.authService.getRefreshTokenFromCookies(req);
@@ -113,50 +109,62 @@ export class AuthController {
     return res.status(200).json({ ok: true });
   }
 
-  /**
-   * 내 정보
-   * GET /auth/me
-   */
   @Get('me')
   @UseGuards(JwtAuthGuard)
-  async me(@CurrentUser() user: any) {
+  async me(@CurrentUser() user: unknown) {
     return { user };
   }
 
   /**
-   * ✅ GitHub OAuth 시작
-   * GET /auth/github?next=/projects
+   * GitHub OAuth 완료 후 1회성 access token 수령 (HttpOnly 쿠키 → JSON, URL 미노출)
    */
+  @Get('oauth/session')
+  async oauthSession(@Req() req: Request, @Res() res: Response) {
+    const accessToken = this.authService.consumeOAuthAccessCookie(req);
+    this.authService.clearOAuthAccessCookie(res);
+
+    if (!accessToken) {
+      throw new UnauthorizedException('OAuth session expired or missing');
+    }
+
+    return res.status(200).json({ accessToken });
+  }
+
   @Get('github')
   @UseGuards(GithubAuthGuard)
   async github() {
-    // Guard가 GitHub로 redirect 처리합니다.
+    // Guard redirects to GitHub
   }
 
-  /**
-   * ✅ GitHub OAuth 콜백
-   * GET /auth/github/callback
-   */
   @Get('github/callback')
   @UseGuards(AuthGuard('github'))
   async githubCallback(@Req() req: Request, @Res() res: Response) {
+    const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
+
     try {
-      const next = (req as any)?.cookies?.oauth_next;
-      const safeNext = typeof next === 'string' && next.startsWith('/') ? next : '/projects';
+      const next = (req as Request & { cookies?: Record<string, string> }).cookies
+        ?.oauth_next;
+      const safeNext =
+        typeof next === 'string' && next.startsWith('/') && !next.startsWith('//')
+          ? next
+          : '/projects';
 
-      const result = await this.authService.loginGithub(req.user as any, req);
+      const result = await this.authService.loginGithub(req.user as object, req);
       this.authService.setRefreshCookie(res, result.refreshToken);
+      this.authService.setOAuthAccessCookie(res, result.accessToken);
 
-      const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
       const url = new URL(`${frontendBase}/login`);
       url.searchParams.set('oauth', 'success');
       url.searchParams.set('next', safeNext);
-      url.searchParams.set('accessToken', result.accessToken);
 
       res.clearCookie('oauth_next', { path: '/auth/github' });
       return res.redirect(url.toString());
-    } catch {
-      const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
+    } catch (err) {
+      this.logger.error(
+        'GitHub OAuth callback failed',
+        err instanceof Error ? err.stack : undefined,
+      );
+
       const url = new URL(`${frontendBase}/login`);
       url.searchParams.set('oauth', 'failed');
       url.searchParams.set('next', '/projects');

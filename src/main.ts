@@ -1,21 +1,43 @@
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
+import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import * as cookieParser from 'cookie-parser';
+import { AppModule } from './app.module';
+import { AppLogger } from './common/logger/app-logger.service';
+import { validateEnv } from './common/config/env.schema';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  validateEnv(process.env as Record<string, unknown>);
 
-  // ✅ Cookie 파싱 (refresh_token 등 HttpOnly 쿠키 사용을 위해 필요)
-  app.use(cookieParser());
-
-  // ✅ CORS 설정 (쿠키 포함 요청을 위해 credentials: true 필수)
-  app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    credentials: true,
+  const app = await NestFactory.create(AppModule, {
+    bufferLogs: true,
   });
 
-  // ✅ Swagger 설정 (SWAGGER=true 일 때만)
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+
+  const logger = app.get(AppLogger);
+  logger.setContext('Bootstrap');
+  app.useLogger(logger);
+
+  app.use(cookieParser());
+
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  app.enableCors({
+    origin: frontendUrl,
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+  });
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
+
   if (process.env.SWAGGER === 'true') {
     const config = new DocumentBuilder()
       .setTitle('SyncUp API')
@@ -28,16 +50,27 @@ async function bootstrap() {
       .build();
 
     const document = SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('swagger', app, document); // http://localhost:<port>/swagger
+    SwaggerModule.setup('swagger', app, document);
   }
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);
 
-  console.log(`Application is running on: http://localhost:${port}`);
+  logger.log(`Application is running on: http://localhost:${port}`);
   if (process.env.SWAGGER === 'true') {
-    console.log(`Swagger is running on: http://localhost:${port}/swagger`);
+    logger.log(`Swagger is running on: http://localhost:${port}/swagger`);
   }
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  console.error(
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'error',
+      context: 'Bootstrap',
+      message: 'Failed to start application',
+      error: err instanceof Error ? err.message : String(err),
+    }),
+  );
+  process.exit(1);
+});

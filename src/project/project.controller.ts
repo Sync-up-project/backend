@@ -21,8 +21,9 @@ export class ProjectController {
    * POST /projects
    */
   @Post()
-  async create(@Body() dto: CreateProjectDto) {
-    return this.projectService.createProject(dto);
+  @UseGuards(JwtAuthGuard)
+  async create(@Body() dto: CreateProjectDto, @CurrentUser() user: { id: string }) {
+    return this.projectService.createProject(dto, String(user.id));
   }
 
   /**
@@ -30,8 +31,9 @@ export class ProjectController {
    * POST /projects/confirm
    */
   @Post('confirm')
-  async confirm(@Body() dto: ConfirmProjectDto) {
-    return this.projectService.confirmFromArtifact(dto);
+  @UseGuards(JwtAuthGuard)
+  async confirm(@Body() dto: ConfirmProjectDto, @CurrentUser() user: { id: string }) {
+    return this.projectService.confirmFromArtifact(dto, String(user.id));
   }
 
   @Get()
@@ -132,8 +134,9 @@ export class ProjectController {
    * GET /projects/:id/kanban
    */
   @Get(':id/kanban')
-  async getKanbanBoard(@Param('id') id: string) {
-    return this.projectService.getKanbanBoard(id);
+  @UseGuards(JwtAuthGuard)
+  async getKanbanBoard(@Param('id') id: string, @CurrentUser() user: { id: string }) {
+    return this.projectService.getKanbanBoard(id, String(user.id));
   }
 
   /**

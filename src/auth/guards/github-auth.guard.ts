@@ -13,7 +13,8 @@ export class GithubAuthGuard extends AuthGuard('github') {
     const res: any = context.switchToHttp().getResponse();
 
     const next = typeof req?.query?.next === 'string' ? req.query.next : null;
-    const safeNext = next && next.startsWith('/') ? next : '/projects';
+    const safeNext =
+      next && next.startsWith('/') && !next.startsWith('//') ? next : '/projects';
 
     // callback에서만 쓰는 값이라 짧게 유지
     res.cookie('oauth_next', safeNext, {

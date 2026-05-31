@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProjectAccessService } from '../domain/project/project-access.service';
 import { KanbanCardStatus } from '@prisma/client';
 import {
   CreateCardDto,
@@ -15,7 +16,14 @@ import {
 
 @Injectable()
 export class KanbanService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly projectAccess: ProjectAccessService,
+  ) {}
+
+  private async assertAccess(projectId: string, userId: string) {
+    await this.projectAccess.assertMemberOrOwner(projectId, userId);
+  }
 
   // ---------- helpers ----------
   private async assertProject(projectId: string) {
@@ -58,7 +66,8 @@ export class KanbanService {
     });
   }
 
-  async getBoard(projectId: string) {
+  async getBoard(projectId: string, userId: string) {
+    await this.assertAccess(projectId, userId);
     await this.assertProject(projectId);
 
     const board = await this.getBoardRaw(projectId);
@@ -93,15 +102,16 @@ export class KanbanService {
    * 없으면 기본 보드 생성 (TODO / IN PROGRESS / DONE)
    * ownerId 들어오면 ProjectMember도 보장
    */
-  async ensureBoard(projectId: string, ownerId: string | null) {
+  async ensureBoard(projectId: string, userId: string) {
     const project = await this.assertProject(projectId);
+    await this.assertAccess(projectId, userId);
 
     const existing = await this.prisma.kanbanBoard.findUnique({
       where: { projectId },
     });
-    if (existing) return this.getBoard(projectId);
+    if (existing) return this.getBoard(projectId, userId);
 
-    const finalOwnerId = ownerId ?? project.ownerId;
+    const finalOwnerId = project.ownerId;
 
     await this.prisma.$transaction(async tx => {
       await tx.projectMember.upsert({
@@ -124,11 +134,12 @@ export class KanbanService {
       });
     });
 
-    return this.getBoard(projectId);
+    return this.getBoard(projectId, userId);
   }
 
   // ---------- Columns ----------
-  async createColumn(projectId: string, dto: CreateColumnDto) {
+  async createColumn(projectId: string, userId: string, dto: CreateColumnDto) {
+    await this.assertAccess(projectId, userId);
     await this.assertProject(projectId);
 
     const board = await this.prisma.kanbanBoard.findUnique({
@@ -151,14 +162,16 @@ export class KanbanService {
       },
     });
 
-    return this.getBoard(projectId);
+    return this.getBoard(projectId, userId);
   }
 
   async renameColumn(
     projectId: string,
+    userId: string,
     columnId: string,
     dto: RenameColumnDto,
   ) {
+    await this.assertAccess(projectId, userId);
     await this.assertProject(projectId);
 
     const col = await this.prisma.kanbanColumn.findUnique({
@@ -174,10 +187,11 @@ export class KanbanService {
     });
 
     // 컬럼명 바뀌면 status 매핑도 바꾸고 싶으면 여기서 카드 status 일괄 업데이트 가능 (선택)
-    return this.getBoard(projectId);
+    return this.getBoard(projectId, userId);
   }
 
-  async deleteColumn(projectId: string, columnId: string) {
+  async deleteColumn(projectId: string, userId: string, columnId: string) {
+    await this.assertAccess(projectId, userId);
     await this.assertProject(projectId);
 
     const col = await this.prisma.kanbanColumn.findUnique({
@@ -190,11 +204,12 @@ export class KanbanService {
     // onDelete: Cascade라 카드도 같이 삭제됨
     await this.prisma.kanbanColumn.delete({ where: { id: columnId } });
 
-    return this.getBoard(projectId);
+    return this.getBoard(projectId, userId);
   }
 
   // ---------- Cards ----------
-  async createCard(projectId: string, dto: CreateCardDto) {
+  async createCard(projectId: string, userId: string, dto: CreateCardDto) {
+    await this.assertAccess(projectId, userId);
     await this.assertProject(projectId);
 
     const col = await this.prisma.kanbanColumn.findUnique({
@@ -222,10 +237,16 @@ export class KanbanService {
       },
     });
 
-    return this.getBoard(projectId);
+    return this.getBoard(projectId, userId);
   }
 
-  async updateCard(projectId: string, cardId: string, dto: UpdateCardDto) {
+  async updateCard(
+    projectId: string,
+    userId: string,
+    cardId: string,
+    dto: UpdateCardDto,
+  ) {
+    await this.assertAccess(projectId, userId);
     await this.assertProject(projectId);
 
     const card = await this.prisma.kanbanCard.findUnique({
@@ -249,10 +270,11 @@ export class KanbanService {
       },
     });
 
-    return this.getBoard(projectId);
+    return this.getBoard(projectId, userId);
   }
 
-  async deleteCard(projectId: string, cardId: string) {
+  async deleteCard(projectId: string, userId: string, cardId: string) {
+    await this.assertAccess(projectId, userId);
     await this.assertProject(projectId);
 
     const card = await this.prisma.kanbanCard.findUnique({
@@ -265,7 +287,7 @@ export class KanbanService {
     await this.prisma.kanbanCard.delete({ where: { id: cardId } });
 
     // position 정렬까지 깔끔히 하려면 같은 컬럼 카드들 reindex(선택)
-    return this.getBoard(projectId);
+    return this.getBoard(projectId, userId);
   }
 
   /**
@@ -275,7 +297,8 @@ export class KanbanService {
    * - toColumn의 카드들 position 재정렬
    * - status는 목적 컬럼명 기준으로 업데이트(추천)
    */
-  async moveCard(projectId: string, dto: MoveCardDto) {
+  async moveCard(projectId: string, userId: string, dto: MoveCardDto) {
+    await this.assertAccess(projectId, userId);
     await this.assertProject(projectId);
 
     const card = await this.prisma.kanbanCard.findUnique({
@@ -371,6 +394,6 @@ export class KanbanService {
       }
     });
 
-    return this.getBoard(projectId);
+    return this.getBoard(projectId, userId);
   }
 }

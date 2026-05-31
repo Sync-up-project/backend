@@ -43,10 +43,6 @@ export class ConfirmProjectDto {
 
   @IsOptional()
   @IsString()
-  ownerId?: string;
-
-  @IsOptional()
-  @IsString()
   originalLang?: string;
 
   @IsOptional()

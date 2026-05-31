@@ -33,12 +33,10 @@ export class PositionNeedDto {
 }
 
 export class CreateProjectDto {
-  /**
-   * ⚠️ 지금은 인증 연동 전이므로 임시로 ownerId를 body로 받습니다.
-   * 나중에 로그인 붙이면 CurrentUser에서 userId로 대체하는 게 정석입니다.
-   */
+  /** @deprecated 서버는 JWT 사용자 ID만 owner로 사용합니다 */
+  @IsOptional()
   @IsString()
-  ownerId!: string;
+  ownerId?: string;
 
   @IsOptional()
   @IsString()

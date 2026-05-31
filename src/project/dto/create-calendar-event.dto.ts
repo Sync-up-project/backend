@@ -9,6 +9,7 @@ import {
   IsString,
   Max,
   Min,
+  MinLength,
 } from 'class-validator';
 
 const CALENDAR_EVENT_TYPES = ['TASK', 'MEETING', 'MILESTONE'] as const;
@@ -27,6 +28,7 @@ const CALENDAR_EVENT_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as const;
 
 export class CreateCalendarEventDto {
   @IsString()
+  @MinLength(1)
   title!: string;
 
   @IsOptional()

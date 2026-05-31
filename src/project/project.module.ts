@@ -6,10 +6,8 @@ import { CalendarEventsController } from './calendar-events.controller';
 import { ProjectService } from './project.service';
 import { ProjectParticipationService } from './project-participation.service';
 import { CalendarEventsService } from './calendar-events.service';
-import { PrismaService } from '../../prisma/prisma.service';
-
 @Module({
   controllers: [ProjectController, InvitationsController, ApplicationsController, CalendarEventsController],
-  providers: [ProjectService, ProjectParticipationService, CalendarEventsService, PrismaService],
+  providers: [ProjectService, ProjectParticipationService, CalendarEventsService],
 })
 export class ProjectModule {}
