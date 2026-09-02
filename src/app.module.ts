@@ -15,6 +15,8 @@ import { AiModule } from './ai/ai.module';
 import { KanbanModule } from './kanban/kanban.module';
 import { NoticeModule } from './notice/notice.module';
 import { CommunityModule } from './community/community.module';
+import { NotificationModule } from './notification/notification.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import { CommunityModule } from './community/community.module';
     // ✅ 공지사항/커뮤니티
     NoticeModule,
     CommunityModule,
+    NotificationModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

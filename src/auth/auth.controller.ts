@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Logger,
   Post,
   Req,
   Res,
@@ -29,6 +30,8 @@ type LoginBody = {
 
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(private readonly authService: AuthService) {}
 
   /**
@@ -37,7 +40,11 @@ export class AuthController {
    * - 성공 시 refresh 쿠키 + accessToken + user 반환
    */
   @Post('signup')
-  async signup(@Body() body: SignupBody, @Req() req: Request, @Res() res: Response) {
+  async signup(
+    @Body() body: SignupBody,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
     if (!body?.email || !body?.password || !body?.nickname) {
       throw new BadRequestException('email, password, nickname are required');
     }
@@ -65,12 +72,42 @@ export class AuthController {
    * - 성공 시 refresh 쿠키 + accessToken + user 반환
    */
   @Post('login')
-  async login(@Body() body: LoginBody, @Req() req: Request, @Res() res: Response) {
+  async login(
+    @Body() body: LoginBody,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
     if (!body?.email || !body?.password) {
       throw new BadRequestException('email, password are required');
     }
 
     const result = await this.authService.loginLocal(
+      {
+        email: body.email,
+        password: body.password,
+      },
+      req,
+    );
+
+    this.authService.setRefreshCookie(res, result.refreshToken);
+    return res.status(200).json({
+      accessToken: result.accessToken,
+      expiresIn: result.expiresIn,
+      user: result.user,
+    });
+  }
+
+  @Post('admin/login')
+  async adminLogin(
+    @Body() body: LoginBody,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    if (!body?.email || !body?.password) {
+      throw new BadRequestException('email, password are required');
+    }
+
+    const result = await this.authService.loginAdminLocal(
       {
         email: body.email,
         password: body.password,
@@ -95,7 +132,8 @@ export class AuthController {
     const refreshToken = this.authService.getRefreshTokenFromCookies(req);
     if (!refreshToken) throw new UnauthorizedException('No refresh token');
 
-    const { accessToken, expiresIn } = await this.authService.rotateAccessToken(refreshToken);
+    const { accessToken, expiresIn } =
+      await this.authService.rotateAccessToken(refreshToken);
     return res.status(200).json({ accessToken, expiresIn });
   }
 
@@ -142,7 +180,8 @@ export class AuthController {
   async githubCallback(@Req() req: Request, @Res() res: Response) {
     try {
       const next = (req as any)?.cookies?.oauth_next;
-      const safeNext = typeof next === 'string' && next.startsWith('/') ? next : '/projects';
+      const safeNext =
+        typeof next === 'string' && next.startsWith('/') ? next : '/projects';
 
       const result = await this.authService.loginGithub(req.user as any, req);
       this.authService.setRefreshCookie(res, result.refreshToken);
@@ -155,7 +194,11 @@ export class AuthController {
 
       res.clearCookie('oauth_next', { path: '/auth/github' });
       return res.redirect(url.toString());
-    } catch {
+    } catch (err) {
+      this.logger.error(
+        `GitHub OAuth callback failed: ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : undefined,
+      );
       const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
       const url = new URL(`${frontendBase}/login`);
       url.searchParams.set('oauth', 'failed');

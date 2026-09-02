@@ -93,6 +93,40 @@ export class ProjectController {
     return this.participation.listPendingApplications(id, String(user?.id ?? ''));
   }
 
+  @Get(':id/members')
+  @UseGuards(JwtAuthGuard)
+  async listMembers(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.participation.listProjectMembers(id, String(user?.id ?? ''));
+  }
+
+  @Post(':id/member-removal-requests')
+  @UseGuards(JwtAuthGuard)
+  async requestMemberRemoval(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() body: { targetUserId?: string },
+  ) {
+    return this.participation.requestMemberRemoval(
+      id,
+      String(user?.id ?? ''),
+      String(body?.targetUserId ?? ''),
+    );
+  }
+
+  @Patch(':id/member-removal-requests/:requestId/approve')
+  @UseGuards(JwtAuthGuard)
+  async approveMemberRemoval(
+    @Param('id') id: string,
+    @Param('requestId') requestId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.participation.approveMemberRemoval(
+      id,
+      requestId,
+      String(user?.id ?? ''),
+    );
+  }
+
   @Post(':id/invitations')
   @UseGuards(JwtAuthGuard)
   async invite(

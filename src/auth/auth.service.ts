@@ -1,9 +1,14 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Request } from 'express';
 import * as bcrypt from 'bcryptjs';
-import { AuthProvider } from '@prisma/client';
+import { AccountRole, AuthProvider, AuditAction } from '@prisma/client';
+import { randomUUID } from 'crypto';
 
 type LocalSignupInput = {
   email: string;
@@ -31,8 +36,10 @@ export class AuthService {
     const nickname = input.nickname.trim();
 
     if (!email) throw new BadRequestException('Invalid email');
-    if (input.password.length < 6) throw new BadRequestException('Password must be at least 6 chars');
-    if (nickname.length < 2) throw new BadRequestException('Nickname must be at least 2 chars');
+    if (input.password.length < 6)
+      throw new BadRequestException('Password must be at least 6 chars');
+    if (nickname.length < 2)
+      throw new BadRequestException('Nickname must be at least 2 chars');
 
     const emailExists = await this.prisma.user.findUnique({
       where: { email },
@@ -44,7 +51,8 @@ export class AuthService {
       where: { nickname },
       select: { id: true },
     });
-    if (nicknameExists) throw new BadRequestException('Nickname already in use');
+    if (nicknameExists)
+      throw new BadRequestException('Nickname already in use');
 
     const passwordHash = await bcrypt.hash(input.password, 10);
 
@@ -60,6 +68,7 @@ export class AuthService {
         email: true,
         nickname: true,
         role: true,
+        accountRole: true,
         profileImageUrl: true,
       },
     });
@@ -82,6 +91,7 @@ export class AuthService {
         email: true,
         nickname: true,
         role: true,
+        accountRole: true,
         profileImageUrl: true,
         passwordHash: true,
       },
@@ -103,9 +113,35 @@ export class AuthService {
         email: user.email,
         nickname: user.nickname,
         role: user.role,
+        accountRole: user.accountRole,
         profileImageUrl: user.profileImageUrl,
       },
     };
+  }
+
+  async loginAdminLocal(input: LocalLoginInput, req: Request) {
+    const result = await this.loginLocal(input, req);
+
+    if (result.user.accountRole !== AccountRole.ADMIN) {
+      await this.revokeRefreshSession(result.refreshToken);
+      throw new UnauthorizedException('Admin account required');
+    }
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: result.user.id,
+        action: AuditAction.CREATE,
+        entityType: 'AdminSession',
+        entityId: result.user.id,
+        summary: 'Admin login',
+        diffJson: {
+          ip: this.getIp(req),
+          userAgent: req.headers['user-agent'] || null,
+        },
+      },
+    });
+
+    return result;
   }
 
   async rotateAccessToken(refreshToken: string) {
@@ -113,17 +149,25 @@ export class AuthService {
 
     const session = await this.prisma.refreshSession.findUnique({
       where: { id: payload.sid },
-      select: { id: true, userId: true, refreshTokenHash: true, expiresAt: true },
+      select: {
+        id: true,
+        userId: true,
+        refreshTokenHash: true,
+        expiresAt: true,
+      },
     });
 
     if (!session) throw new UnauthorizedException('Refresh session not found');
-    if (session.expiresAt.getTime() < Date.now()) throw new UnauthorizedException('Refresh session expired');
+    if (session.expiresAt.getTime() < Date.now())
+      throw new UnauthorizedException('Refresh session expired');
 
     const ok = await bcrypt.compare(refreshToken, session.refreshTokenHash);
     if (!ok) throw new UnauthorizedException('Invalid refresh token');
 
     const accessToken = await this.signAccessToken(payload.sub);
-    const expiresIn = this.parseExpiresToSeconds(process.env.JWT_ACCESS_EXPIRES_IN || '15m');
+    const expiresIn = this.parseExpiresToSeconds(
+      process.env.JWT_ACCESS_EXPIRES_IN || '15m',
+    );
 
     return { accessToken, expiresIn };
   }
@@ -142,12 +186,20 @@ export class AuthService {
     },
     req: Request,
   ) {
-    const providerUserId = githubUser?.githubId ? String(githubUser.githubId) : '';
-    if (!providerUserId) throw new BadRequestException('Invalid GitHub profile');
+    const providerUserId = githubUser?.githubId
+      ? String(githubUser.githubId)
+      : '';
+    if (!providerUserId)
+      throw new BadRequestException('Invalid GitHub profile');
 
     const username = githubUser?.username ? String(githubUser.username) : null;
-    const emailRaw = githubUser?.email ? String(githubUser.email).trim().toLowerCase() : null;
-    const avatarUrl = githubUser?.avatarUrl ? String(githubUser.avatarUrl) : null;
+    const emailRaw = githubUser?.email
+      ? String(githubUser.email).trim().toLowerCase()
+      : null;
+    const avatarUrl = githubUser?.avatarUrl
+      ? String(githubUser.avatarUrl)
+      : null;
+    const fallbackNickname = username ?? `github-${providerUserId}`;
 
     const oauth = await this.prisma.oAuthAccount.findUnique({
       where: {
@@ -180,18 +232,32 @@ export class AuthService {
             email: emailRaw ?? undefined,
             nickname: username ?? undefined,
           },
-          select: { id: true, email: true, nickname: true, role: true, profileImageUrl: true },
+          select: {
+            id: true,
+            email: true,
+            nickname: true,
+            role: true,
+            accountRole: true,
+            profileImageUrl: true,
+          },
         })
       : await this.prisma.user.create({
           data: {
             email: emailRaw,
             passwordHash: null,
-            nickname: username,
+            nickname: fallbackNickname,
             profileImageUrl: avatarUrl,
             githubUsername: username,
             githubUrl: username ? `https://github.com/${username}` : null,
           },
-          select: { id: true, email: true, nickname: true, role: true, profileImageUrl: true },
+          select: {
+            id: true,
+            email: true,
+            nickname: true,
+            role: true,
+            accountRole: true,
+            profileImageUrl: true,
+          },
         });
 
     await this.prisma.oAuthAccount.upsert({
@@ -236,20 +302,28 @@ export class AuthService {
 
   setRefreshCookie(res: any, refreshToken: string) {
     const secure = (process.env.COOKIE_SECURE || 'false') === 'true';
-    const sameSite = (process.env.COOKIE_SAMESITE || 'lax') as 'lax' | 'strict' | 'none';
+    const sameSite = (process.env.COOKIE_SAMESITE || 'lax') as
+      | 'lax'
+      | 'strict'
+      | 'none';
 
     res.cookie('refresh_token', refreshToken, {
       httpOnly: true,
       secure,
       sameSite,
       path: '/auth',
-      maxAge: this.parseExpiresToMilliseconds(process.env.JWT_REFRESH_EXPIRES_IN || '30d'),
+      maxAge: this.parseExpiresToMilliseconds(
+        process.env.JWT_REFRESH_EXPIRES_IN || '30d',
+      ),
     });
   }
 
   clearRefreshCookie(res: any) {
     const secure = (process.env.COOKIE_SECURE || 'false') === 'true';
-    const sameSite = (process.env.COOKIE_SAMESITE || 'lax') as 'lax' | 'strict' | 'none';
+    const sameSite = (process.env.COOKIE_SAMESITE || 'lax') as
+      | 'lax'
+      | 'strict'
+      | 'none';
 
     res.cookie('refresh_token', '', {
       httpOnly: true,
@@ -266,11 +340,14 @@ export class AuthService {
   }
 
   private async issueTokensForUserId(userId: string, req: Request) {
-    const refreshExpiresAt = this.calcFutureDate(process.env.JWT_REFRESH_EXPIRES_IN || '30d');
+    const refreshExpiresAt = this.calcFutureDate(
+      process.env.JWT_REFRESH_EXPIRES_IN || '30d',
+    );
 
     const refreshSession = await this.prisma.refreshSession.create({
       data: {
-        userId,
+        user: { connect: { id: userId } },
+        familyId: randomUUID(),
         refreshTokenHash: 'TEMP',
         expiresAt: refreshExpiresAt,
         userAgent: req.headers['user-agent'] || null,
@@ -291,28 +368,40 @@ export class AuthService {
     return {
       accessToken,
       refreshToken,
-      expiresIn: this.parseExpiresToSeconds(process.env.JWT_ACCESS_EXPIRES_IN || '15m'),
+      expiresIn: this.parseExpiresToSeconds(
+        process.env.JWT_ACCESS_EXPIRES_IN || '15m',
+      ),
     };
   }
 
   private async signAccessToken(userId: string) {
     const payload: JwtAccessPayload = { sub: userId };
-    const expiresInSeconds = this.parseExpiresToSeconds(process.env.JWT_ACCESS_EXPIRES_IN || '15m');
+    const expiresInSeconds = this.parseExpiresToSeconds(
+      process.env.JWT_ACCESS_EXPIRES_IN || '15m',
+    );
 
-    return this.jwt.signAsync(payload as any, {
-      secret: process.env.JWT_ACCESS_SECRET,
-      expiresIn: expiresInSeconds,
-    } as any);
+    return this.jwt.signAsync(
+      payload as any,
+      {
+        secret: process.env.JWT_ACCESS_SECRET,
+        expiresIn: expiresInSeconds,
+      } as any,
+    );
   }
 
   private async signRefreshToken(userId: string, sessionId: string) {
     const payload: JwtRefreshPayload = { sub: userId, sid: sessionId };
-    const expiresInSeconds = this.parseExpiresToSeconds(process.env.JWT_REFRESH_EXPIRES_IN || '30d');
+    const expiresInSeconds = this.parseExpiresToSeconds(
+      process.env.JWT_REFRESH_EXPIRES_IN || '30d',
+    );
 
-    return this.jwt.signAsync(payload as any, {
-      secret: process.env.JWT_REFRESH_SECRET,
-      expiresIn: expiresInSeconds,
-    } as any);
+    return this.jwt.signAsync(
+      payload as any,
+      {
+        secret: process.env.JWT_REFRESH_SECRET,
+        expiresIn: expiresInSeconds,
+      } as any,
+    );
   }
 
   private async verifyRefreshToken(token: string): Promise<JwtRefreshPayload> {

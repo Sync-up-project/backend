@@ -37,6 +37,7 @@ export class UsersService {
         email: true,
         nickname: true,
         role: true,
+        accountRole: true,
         profileImageUrl: true,
         primaryLanguage: true,
       },

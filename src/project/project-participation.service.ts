@@ -7,7 +7,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ApplicationStatus, InviteStatus, Language } from '@prisma/client';
+import {
+  ApplicationStatus,
+  InviteStatus,
+  Language,
+  MemberRemovalStatus,
+} from '@prisma/client';
 
 @Injectable()
 export class ProjectParticipationService {
@@ -278,6 +283,170 @@ export class ProjectParticipationService {
     });
 
     return { applications };
+  }
+
+  async listProjectMembers(projectId: string, userId: string) {
+    if (!userId) throw new ForbiddenException('로그인이 필요합니다.');
+
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: {
+        id: true,
+        ownerId: true,
+        owner: {
+          select: {
+            id: true,
+            nickname: true,
+            profileImageUrl: true,
+            role: true,
+          },
+        },
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                nickname: true,
+                profileImageUrl: true,
+                role: true,
+              },
+            },
+          },
+          orderBy: { joinedAt: 'asc' },
+        },
+        memberRemovalRequests: {
+          where: { status: MemberRemovalStatus.PENDING },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+    });
+
+    if (!project) throw new NotFoundException('프로젝트를 찾을 수 없어요.');
+
+    const isOwner = project.ownerId === userId;
+    const isMember = project.members.some(member => member.userId === userId);
+    if (!isOwner && !isMember) {
+      throw new ForbiddenException('프로젝트 멤버만 볼 수 있어요.');
+    }
+
+    return {
+      owner: project.owner,
+      members: project.members.map(member => ({
+        id: member.id,
+        userId: member.userId,
+        roleInProject: member.roleInProject,
+        joinedAt: member.joinedAt,
+        user: member.user,
+      })),
+      removalRequests: project.memberRemovalRequests,
+    };
+  }
+
+  async requestMemberRemoval(projectId: string, actorId: string, targetUserId: string) {
+    if (!actorId) throw new ForbiddenException('로그인이 필요합니다.');
+
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true, ownerId: true, titleOriginal: true },
+    });
+    if (!project) throw new NotFoundException('프로젝트를 찾을 수 없어요.');
+    if (project.ownerId === targetUserId) {
+      throw new BadRequestException('프로젝트 소유자는 퇴장 요청 대상이 될 수 없습니다.');
+    }
+
+    const member = await this.prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId, userId: targetUserId } },
+      select: { id: true, userId: true },
+    });
+    if (!member) throw new NotFoundException('프로젝트 멤버를 찾을 수 없어요.');
+
+    const actorIsOwner = project.ownerId === actorId;
+    const actorIsTarget = targetUserId === actorId;
+    if (!actorIsOwner && !actorIsTarget) {
+      throw new ForbiddenException('오너 또는 해당 멤버만 퇴장 요청을 만들 수 있어요.');
+    }
+
+    const existing = await this.prisma.projectMemberRemovalRequest.findFirst({
+      where: {
+        projectId,
+        targetUserId,
+        status: MemberRemovalStatus.PENDING,
+      },
+    });
+
+    if (existing) return { request: existing };
+
+    const now = new Date();
+    const request = await this.prisma.projectMemberRemovalRequest.create({
+      data: {
+        projectId,
+        projectMemberId: member.id,
+        targetUserId,
+        requestedById: actorId,
+        ownerApprovedAt: actorIsOwner ? now : null,
+        memberApprovedAt: actorIsTarget ? now : null,
+      },
+    });
+
+    return { request };
+  }
+
+  async approveMemberRemoval(projectId: string, requestId: string, actorId: string) {
+    if (!actorId) throw new ForbiddenException('로그인이 필요합니다.');
+
+    const request = await this.prisma.projectMemberRemovalRequest.findUnique({
+      where: { id: requestId },
+      include: {
+        project: { select: { id: true, ownerId: true } },
+        projectMember: { select: { id: true, projectId: true, userId: true } },
+      },
+    });
+
+    if (!request || request.projectId !== projectId) {
+      throw new NotFoundException('퇴장 요청을 찾을 수 없어요.');
+    }
+    if (request.status !== MemberRemovalStatus.PENDING) {
+      throw new BadRequestException('이미 처리된 퇴장 요청입니다.');
+    }
+
+    const actorIsOwner = request.project.ownerId === actorId;
+    const actorIsTarget = request.targetUserId === actorId;
+    if (!actorIsOwner && !actorIsTarget) {
+      throw new ForbiddenException('오너 또는 해당 멤버만 동의할 수 있어요.');
+    }
+
+    const ownerApprovedAt = request.ownerApprovedAt ?? (actorIsOwner ? new Date() : null);
+    const memberApprovedAt =
+      request.memberApprovedAt ?? (actorIsTarget ? new Date() : null);
+
+    if (ownerApprovedAt && memberApprovedAt) {
+      await this.prisma.$transaction(async tx => {
+        await tx.projectMemberRemovalRequest.update({
+          where: { id: request.id },
+          data: {
+            ownerApprovedAt,
+            memberApprovedAt,
+            status: MemberRemovalStatus.COMPLETED,
+            completedAt: new Date(),
+          },
+        });
+        await tx.projectMember.delete({
+          where: { id: request.projectMemberId },
+        });
+      });
+
+      return { status: MemberRemovalStatus.COMPLETED };
+    }
+
+    const updated = await this.prisma.projectMemberRemovalRequest.update({
+      where: { id: request.id },
+      data: {
+        ownerApprovedAt,
+        memberApprovedAt,
+      },
+    });
+
+    return { status: updated.status, request: updated };
   }
 
   async respondToInvitation(invitationId: string, userId: string, accept: boolean) {

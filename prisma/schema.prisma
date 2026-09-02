@@ -163,6 +163,8 @@ model User {
   sentInvitations       Invitation[]        @relation("InvitationInviter")
   receivedInvitations   Invitation[]        @relation("InvitationInvitee")
   applications          Application[]
+  memberRemovalRequestsTargeted ProjectMemberRemovalRequest[] @relation("MemberRemovalTarget")
+  memberRemovalRequestsCreated  ProjectMemberRemovalRequest[] @relation("MemberRemovalRequester")
   chatMessages          ChatMessage[]
   chatRoomMembers       ChatRoomMember[]
   evaluationsGiven      ProjectEvaluation[] @relation("EvaluationGiver")
@@ -255,6 +257,7 @@ model Project {
   members        ProjectMember[]
   invitations    Invitation[]
   applications   Application[]
+  memberRemovalRequests ProjectMemberRemovalRequest[]
   chatRoom       ChatRoom?
   kanbanBoard    KanbanBoard?
   successStories ProjectSuccessStory[]
@@ -338,10 +341,42 @@ model ProjectMember {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  removalRequests ProjectMemberRemovalRequest[]
 
   @@unique([projectId, userId])
   @@index([projectId])
   @@index([userId])
+}
+
+enum MemberRemovalStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+model ProjectMemberRemovalRequest {
+  id              String              @id @default(cuid())
+  projectId       String
+  projectMemberId String
+  targetUserId    String
+  requestedById   String
+  ownerApprovedAt DateTime?
+  memberApprovedAt DateTime?
+  status          MemberRemovalStatus @default(PENDING)
+  completedAt     DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectMember ProjectMember @relation(fields: [projectMemberId], references: [id], onDelete: Cascade)
+  targetUser User @relation("MemberRemovalTarget", fields: [targetUserId], references: [id], onDelete: Cascade)
+  requestedBy User @relation("MemberRemovalRequester", fields: [requestedById], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([projectMemberId])
+  @@index([targetUserId])
+  @@index([requestedById])
+  @@index([status])
 }
 
 model Invitation {
@@ -714,20 +749,34 @@ model OAuthAccount {
 
 // ✅ Refresh Token 세션(쿠키 기반 refresh 토큰을 서버에서 폐기/추적하기 위한 테이블)
 model RefreshSession {
-  id               String   @id @default(cuid())
-  userId           String
-  refreshTokenHash String
-  expiresAt        DateTime
+  id                  String   @id @default(cuid())
+  userId              String
+  familyId            String
+  parentSessionId     String?
+  replacedBySessionId String?  @unique
+  refreshTokenHash    String
+  expiresAt           DateTime
+  lastUsedAt          DateTime?
+  revokedAt           DateTime?
+  revokedReason       String?
+  reuseDetectedAt     DateTime?
 
   userAgent        String?
   ip               String?
 
   createdAt        DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentSession     RefreshSession?  @relation("RefreshSessionParentChild", fields: [parentSessionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  childSessions     RefreshSession[] @relation("RefreshSessionParentChild")
+  replacedBySession RefreshSession?  @relation("RefreshSessionReplacement", fields: [replacedBySessionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  previousSession   RefreshSession?  @relation("RefreshSessionReplacement")
 
   @@index([userId])
+  @@index([familyId])
   @@index([expiresAt])
+  @@index([revokedAt])
+  @@index([parentSessionId])
 }
 
 // 프로젝트와 연결된 레포(생성/초대 자동화에 필요)

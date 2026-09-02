@@ -23,6 +23,7 @@ export class JwtAccessStrategy extends PassportStrategy(Strategy, 'jwt-access') 
         email: true,
         nickname: true,
         role: true,
+        accountRole: true,
         profileImageUrl: true,
         primaryLanguage: true,
         createdAt: true,
