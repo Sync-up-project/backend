@@ -12,7 +12,7 @@ export function computeScheduleWindow(opts: {
   deadline?: Date | null;
   createdAt: Date;
 }): { windowStart: Date; windowEnd: Date } {
-  let windowStart = opts.startDate ?? opts.createdAt ?? new Date();
+  const windowStart = opts.startDate ?? opts.createdAt ?? new Date();
   let windowEnd =
     opts.endDate ??
     opts.deadline ??

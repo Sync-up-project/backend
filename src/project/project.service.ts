@@ -368,6 +368,8 @@ export class ProjectService {
    * ✅ (기존 ProjectService 내용 흡수)
    * 프론트 호환용: GET /projects/list
    */
+  // userId 는 컨트롤러 호환용으로 받기만 하고 아직 사용하지 않습니다.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async getProjectList(userId?: string) {
     const projects = await this.prisma.project.findMany({
       include: {

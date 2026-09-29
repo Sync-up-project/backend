@@ -314,12 +314,6 @@ function parseMaybeJson(value: any, label: string) {
   );
 }
 
-const ANY_OBJECT_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {},
-  required: [],
-} as const;
 
 const BUNDLE_SCHEMA = {
   type: 'object',

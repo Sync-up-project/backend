@@ -503,7 +503,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       };
     }
 
-    const { userId, username, projectId } = userInfo;
+    const { userId, projectId } = userInfo;
 
     let originalLang = parseChatSourceLang(data.sourceLang);
     if (!originalLang) {

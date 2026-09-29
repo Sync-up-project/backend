@@ -1,0 +1,129 @@
+# backend CI/CD
+# - verify    : PR·main push 마다 lint / 타입체크 / 빌드 (+ 포맷 검사는 경고만)
+# - migrations: 빈 Postgres 에 마이그레이션을 전부 적용한 뒤 schema.prisma 와 비교
+#               → schema.prisma 를 바꾸고 마이그레이션을 커밋하지 않으면 실패
+# - publish   : main push 일 때만 운영 이미지를 GHCR 에 올림
+#               (ghcr.io/sync-up-project/backend:sha-<커밋SHA>, :main)
+#               실제 서버 배포는 루트 레포(Sync-up)의 deploy 워크플로가 담당합니다.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # 기존 코드에 Prettier 포맷 차이가 많아 우선 경고로만 표시합니다.
+      # 팀에서 `npm run format` 을 한 번 적용한 뒤 continue-on-error 를 지우면 차단 모드가 됩니다.
+      - name: Format check (warning only)
+        continue-on-error: true
+        run: npm run format:check
+
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: syncup_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d syncup_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/syncup_ci?schema=public
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Apply all migrations to an empty database
+        run: npx prisma migrate deploy
+
+      - name: Check schema.prisma matches migrations
+        run: |
+          if ! npx prisma migrate diff \
+                --from-config-datasource \
+                --to-schema prisma/schema.prisma \
+                --exit-code; then
+            echo "::error::schema.prisma 와 prisma/migrations 가 일치하지 않습니다. 'npx prisma migrate dev --name <이름>' 으로 마이그레이션을 만들어 함께 커밋하세요."
+            exit 1
+          fi
+
+  publish:
+    needs: [verify, migrations]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image name
+        id: image
+        # GHCR 이미지 이름은 소문자여야 함 (Sync-up-project → sync-up-project)
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+            ${{ steps.image.outputs.name }}:main
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
