@@ -20,6 +20,47 @@ export class ProjectParticipationService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * 알림 생성 공통 함수
+   * - 수락/거절 등 본 작업이 끝난 뒤 호출합니다.
+   * - 알림 생성이 실패해도 본 작업은 되돌리지 않고 경고 로그만 남깁니다.
+   */
+  private async notify(params: {
+    userId: string;
+    type: string;
+    title: string;
+    body: string;
+    invitationId?: string;
+    applicationId?: string;
+  }) {
+    try {
+      await this.prisma.notification.create({
+        data: {
+          userId: params.userId,
+          type: params.type,
+          isRead: false,
+          originalLang: Language.KO,
+          titleOriginal: params.title,
+          bodyOriginal: params.body,
+          invitationId: params.invitationId,
+          applicationId: params.applicationId,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `알림 생성 실패 (type=${params.type}, user=${params.userId}): ${String(err)}`,
+      );
+    }
+  }
+
+  private async getNickname(userId: string, fallback: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { nickname: true },
+    });
+    return user?.nickname ?? fallback;
+  }
+
   async inviteToProject(
     projectId: string,
     inviterId: string,
@@ -82,11 +123,7 @@ export class ProjectParticipationService {
           },
         });
 
-    const inviter = await this.prisma.user.findUnique({
-      where: { id: inviterId },
-      select: { nickname: true },
-    });
-    const inviterName = inviter?.nickname ?? '팀원';
+    const inviterName = await this.getNickname(inviterId, '팀원');
 
     const bodyLines = [
       `${inviterName}님이 "${project.titleOriginal}" 프로젝트에 당신을 초대했습니다.`,
@@ -96,23 +133,13 @@ export class ProjectParticipationService {
       `초대 ID: ${invitation.id}`,
     ].filter(Boolean) as string[];
 
-    try {
-      await this.prisma.notification.create({
-        data: {
-          userId: targetId,
-          invitationId: invitation.id,
-          type: 'INVITE',
-          isRead: false,
-          originalLang: Language.KO,
-          titleOriginal: `프로젝트 초대: ${project.titleOriginal}`,
-          bodyOriginal: bodyLines.join('\n'),
-        },
-      });
-    } catch (err) {
-      this.logger.warn(
-        `초대 알림 생성 실패 (project=${projectId}, invitation=${invitation.id}): ${String(err)}`,
-      );
-    }
+    await this.notify({
+      userId: targetId,
+      type: 'INVITE',
+      invitationId: invitation.id,
+      title: `프로젝트 초대: ${project.titleOriginal}`,
+      body: bodyLines.join('\n'),
+    });
 
     return { invitation };
   }
@@ -159,11 +186,7 @@ export class ProjectParticipationService {
       });
     }
 
-    const applicant = await this.prisma.user.findUnique({
-      where: { id: applicantId },
-      select: { nickname: true },
-    });
-    const applicantName = applicant?.nickname ?? '사용자';
+    const applicantName = await this.getNickname(applicantId, '사용자');
 
     const bodyLines = [
       `${applicantName}님이 "${project.titleOriginal}" 프로젝트 참가를 신청했습니다.`,
@@ -174,23 +197,13 @@ export class ProjectParticipationService {
       `프로젝트 ID: ${projectId}`,
     ].filter(Boolean) as string[];
 
-    try {
-      await this.prisma.notification.create({
-        data: {
-          userId: project.ownerId,
-          applicationId: application.id,
-          type: 'APPLICATION',
-          isRead: false,
-          originalLang: Language.KO,
-          titleOriginal: `참가 신청: ${project.titleOriginal}`,
-          bodyOriginal: bodyLines.join('\n'),
-        },
-      });
-    } catch (err) {
-      this.logger.warn(
-        `참가 신청 알림 생성 실패 (project=${projectId}, application=${application.id}): ${String(err)}`,
-      );
-    }
+    await this.notify({
+      userId: project.ownerId,
+      type: 'APPLICATION',
+      applicationId: application.id,
+      title: `참가 신청: ${project.titleOriginal}`,
+      body: bodyLines.join('\n'),
+    });
 
     return {
       application: {
@@ -388,6 +401,25 @@ export class ProjectParticipationService {
       },
     });
 
+    // 퇴장은 오너와 멤버 양쪽 동의가 필요하므로, 요청하지 않은 쪽에 알림
+    const projectTitle = project.titleOriginal;
+    if (actorIsOwner && !actorIsTarget) {
+      await this.notify({
+        userId: targetUserId,
+        type: 'MEMBER_REMOVAL_REQUEST',
+        title: `퇴장 요청: ${projectTitle}`,
+        body: `프로젝트 오너가 "${projectTitle}" 프로젝트에서 퇴장을 요청했습니다. 프로젝트 페이지에서 확인 후 동의해주세요.`,
+      });
+    } else {
+      const targetName = await this.getNickname(targetUserId, '팀원');
+      await this.notify({
+        userId: project.ownerId,
+        type: 'MEMBER_REMOVAL_REQUEST',
+        title: `퇴장 요청: ${projectTitle}`,
+        body: `${targetName}님이 "${projectTitle}" 프로젝트에서 나가기를 요청했습니다. 프로젝트 관리 페이지에서 확인해주세요.`,
+      });
+    }
+
     return { request };
   }
 
@@ -397,7 +429,7 @@ export class ProjectParticipationService {
     const request = await this.prisma.projectMemberRemovalRequest.findUnique({
       where: { id: requestId },
       include: {
-        project: { select: { id: true, ownerId: true } },
+        project: { select: { id: true, ownerId: true, titleOriginal: true } },
         projectMember: { select: { id: true, projectId: true, userId: true } },
       },
     });
@@ -434,6 +466,25 @@ export class ProjectParticipationService {
           where: { id: request.projectMemberId },
         });
       });
+
+      // 퇴장 완료 알림: 마지막에 동의한 사람이 아닌 쪽에 알림
+      const projectTitle = request.project.titleOriginal;
+      if (actorIsOwner) {
+        await this.notify({
+          userId: request.targetUserId,
+          type: 'MEMBER_REMOVED',
+          title: `프로젝트 퇴장 완료: ${projectTitle}`,
+          body: `"${projectTitle}" 프로젝트에서 퇴장 처리되었습니다.`,
+        });
+      } else {
+        const targetName = await this.getNickname(request.targetUserId, '팀원');
+        await this.notify({
+          userId: request.project.ownerId,
+          type: 'MEMBER_REMOVED',
+          title: `팀원 퇴장 완료: ${projectTitle}`,
+          body: `${targetName}님이 "${projectTitle}" 프로젝트에서 퇴장했습니다.`,
+        });
+      }
 
       return { status: MemberRemovalStatus.COMPLETED };
     }
@@ -490,6 +541,21 @@ export class ProjectParticipationService {
       });
     }
 
+    // 초대를 보낸 사람에게 응답 결과 알림
+    const projectTitle = invitation.project.titleOriginal;
+    const inviteeName = await this.getNickname(invitation.inviteeId, '초대한 사용자');
+    await this.notify({
+      userId: invitation.inviterId,
+      type: 'INVITE_STATUS',
+      invitationId: invitation.id,
+      title: accept
+        ? `초대 수락: ${projectTitle}`
+        : `초대 거절: ${projectTitle}`,
+      body: accept
+        ? `${inviteeName}님이 "${projectTitle}" 프로젝트 초대를 수락했습니다.`
+        : `${inviteeName}님이 "${projectTitle}" 프로젝트 초대를 거절했습니다.`,
+    });
+
     return { status: accept ? 'ACCEPTED' : 'REJECTED' };
   }
 
@@ -533,6 +599,20 @@ export class ProjectParticipationService {
         data: { status: ApplicationStatus.REJECTED },
       });
     }
+
+    // 지원자에게 신청 결과 알림
+    const projectTitle = application.project.titleOriginal;
+    await this.notify({
+      userId: application.applicantId,
+      type: 'APPLICATION_STATUS',
+      applicationId: application.id,
+      title: accept
+        ? `참가 신청 수락: ${projectTitle}`
+        : `참가 신청 결과: ${projectTitle}`,
+      body: accept
+        ? `"${projectTitle}" 프로젝트 참가 신청이 수락되었습니다. 이제 팀원으로 참여할 수 있어요.`
+        : `"${projectTitle}" 프로젝트 참가 신청이 거절되었습니다. 다른 프로젝트도 둘러보세요.`,
+    });
 
     return { status: accept ? 'ACCEPTED' : 'REJECTED' };
   }
