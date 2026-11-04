@@ -132,9 +132,24 @@ export class AuthController {
     const refreshToken = this.authService.getRefreshTokenFromCookies(req);
     if (!refreshToken) throw new UnauthorizedException('No refresh token');
 
-    const { accessToken, expiresIn } =
-      await this.authService.rotateAccessToken(refreshToken);
-    return res.status(200).json({ accessToken, expiresIn });
+    let result: Awaited<ReturnType<AuthService['rotateRefreshToken']>>;
+    try {
+      result = await this.authService.rotateRefreshToken(refreshToken, req);
+    } catch (err) {
+      // 만료·폐기된 토큰이면 쿠키도 지워서 클라이언트가 재로그인하도록 유도
+      this.authService.clearRefreshCookie(res);
+      throw err;
+    }
+
+    // 새 리프레시 토큰이 발급된 경우에만 쿠키 교체
+    // (동시 요청 유예 시간 내 재요청이면 null → 먼저 성공한 응답이 설정한 쿠키 유지)
+    if (result.refreshToken) {
+      this.authService.setRefreshCookie(res, result.refreshToken);
+    }
+
+    return res
+      .status(200)
+      .json({ accessToken: result.accessToken, expiresIn: result.expiresIn });
   }
 
   /**

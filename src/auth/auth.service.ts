@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -26,6 +27,8 @@ type JwtRefreshPayload = { sub: string; sid: string };
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -144,7 +147,17 @@ export class AuthService {
     return result;
   }
 
-  async rotateAccessToken(refreshToken: string) {
+  /**
+   * ✅ 리프레시 토큰 회전 (Refresh Token Rotation)
+   * - 갱신할 때마다 새 리프레시 토큰을 발급하고, 사용한 토큰은 폐기(revoked)합니다.
+   * - 새 세션은 같은 familyId를 이어받고, 최초 로그인 시점의 만료일을 유지합니다.
+   *   (갱신을 반복해도 로그인 후 최대 유효기간은 늘어나지 않음)
+   * - 이미 폐기된 토큰이 다시 사용되면 탈취로 보고 같은 family의 세션을 모두 폐기합니다.
+   *   단, 여러 요청/탭이 거의 동시에 갱신하는 경우를 위해 짧은 유예 시간을 둡니다.
+   *
+   * 반환값의 refreshToken이 null이면 쿠키를 갱신하지 않습니다(유예 시간 내 재요청).
+   */
+  async rotateRefreshToken(refreshToken: string, req: Request) {
     const payload = await this.verifyRefreshToken(refreshToken);
 
     const session = await this.prisma.refreshSession.findUnique({
@@ -152,24 +165,162 @@ export class AuthService {
       select: {
         id: true,
         userId: true,
+        familyId: true,
         refreshTokenHash: true,
         expiresAt: true,
+        revokedAt: true,
+        revokedReason: true,
+        replacedBySessionId: true,
       },
     });
 
-    if (!session) throw new UnauthorizedException('Refresh session not found');
-    if (session.expiresAt.getTime() < Date.now())
+    if (!session || session.userId !== payload.sub) {
+      throw new UnauthorizedException('Refresh session not found');
+    }
+    if (session.expiresAt.getTime() < Date.now()) {
       throw new UnauthorizedException('Refresh session expired');
+    }
 
     const ok = await bcrypt.compare(refreshToken, session.refreshTokenHash);
     if (!ok) throw new UnauthorizedException('Invalid refresh token');
 
-    const accessToken = await this.signAccessToken(payload.sub);
-    const expiresIn = this.parseExpiresToSeconds(
-      process.env.JWT_ACCESS_EXPIRES_IN || '15m',
-    );
+    if (session.revokedAt) {
+      return this.handleRevokedRefreshToken(session);
+    }
 
-    return { accessToken, expiresIn };
+    const now = new Date();
+
+    // 1) 기존 세션 선점: revokedAt이 null일 때만 갱신되므로
+    //    같은 토큰으로 동시에 요청이 와도 한 요청만 회전에 성공합니다.
+    const claimed = await this.prisma.refreshSession.updateMany({
+      where: { id: session.id, revokedAt: null },
+      data: { revokedAt: now, revokedReason: 'ROTATED', lastUsedAt: now },
+    });
+    if (claimed.count === 0) {
+      // 동시 요청에 밀린 경우: 최신 상태로 다시 확인
+      const latest = await this.prisma.refreshSession.findUnique({
+        where: { id: session.id },
+        select: {
+          id: true,
+          userId: true,
+          familyId: true,
+          revokedAt: true,
+          revokedReason: true,
+          replacedBySessionId: true,
+        },
+      });
+      if (!latest) throw new UnauthorizedException('Refresh session not found');
+      return this.handleRevokedRefreshToken(latest);
+    }
+
+    // 2) 같은 family로 새 세션 + 새 리프레시 토큰 발급
+    const child = await this.prisma.refreshSession.create({
+      data: {
+        user: { connect: { id: session.userId } },
+        familyId: session.familyId,
+        parentSession: { connect: { id: session.id } },
+        refreshTokenHash: 'TEMP',
+        expiresAt: session.expiresAt,
+        userAgent: req.headers['user-agent'] || null,
+        ip: this.getIp(req),
+      },
+      select: { id: true },
+    });
+
+    const newRefreshToken = await this.signRefreshToken(
+      session.userId,
+      child.id,
+    );
+    const newRefreshHash = await bcrypt.hash(newRefreshToken, 10);
+
+    await this.prisma.$transaction([
+      this.prisma.refreshSession.update({
+        where: { id: child.id },
+        data: { refreshTokenHash: newRefreshHash },
+      }),
+      this.prisma.refreshSession.update({
+        where: { id: session.id },
+        data: { replacedBySessionId: child.id },
+      }),
+    ]);
+
+    const accessToken = await this.signAccessToken(session.userId);
+
+    return {
+      accessToken,
+      refreshToken: newRefreshToken as string | null,
+      expiresIn: this.parseExpiresToSeconds(
+        process.env.JWT_ACCESS_EXPIRES_IN || '15m',
+      ),
+    };
+  }
+
+  /**
+   * 이미 폐기된 리프레시 토큰이 들어온 경우 처리
+   * - 회전 직후 유예 시간 내 재요청(동시 요청·다중 탭): 액세스 토큰만 발급
+   *   (새 리프레시 토큰은 먼저 성공한 응답의 쿠키로 이미 전달됨)
+   * - 그 외: 토큰 재사용(탈취 의심)으로 보고 같은 family 세션 전체 폐기
+   */
+  private async handleRevokedRefreshToken(session: {
+    id: string;
+    userId: string;
+    familyId: string;
+    revokedAt: Date | null;
+    revokedReason: string | null;
+    replacedBySessionId: string | null;
+  }) {
+    const graceMs = this.parseExpiresToMilliseconds(
+      process.env.JWT_REFRESH_REUSE_GRACE || '30s',
+    );
+    const withinGrace =
+      session.revokedReason === 'ROTATED' &&
+      !!session.revokedAt &&
+      Date.now() - session.revokedAt.getTime() <= graceMs;
+
+    if (withinGrace) {
+      // 교체된 새 세션이 아직 살아있을 때만 허용
+      const replacement = session.replacedBySessionId
+        ? await this.prisma.refreshSession.findUnique({
+            where: { id: session.replacedBySessionId },
+            select: { revokedAt: true, revokedReason: true },
+          })
+        : null;
+      const replacementAlive =
+        !session.replacedBySessionId || // 회전 처리 중(아직 연결 전)
+        (!!replacement &&
+          (!replacement.revokedAt || replacement.revokedReason === 'ROTATED'));
+
+      if (replacementAlive) {
+        const accessToken = await this.signAccessToken(session.userId);
+        return {
+          accessToken,
+          refreshToken: null as string | null,
+          expiresIn: this.parseExpiresToSeconds(
+            process.env.JWT_ACCESS_EXPIRES_IN || '15m',
+          ),
+        };
+      }
+    }
+
+    if (session.revokedReason === 'ROTATED') {
+      // 회전된 토큰이 유예 시간 이후 다시 사용됨 → 탈취 의심, family 전체 폐기
+      const now = new Date();
+      await this.prisma.$transaction([
+        this.prisma.refreshSession.update({
+          where: { id: session.id },
+          data: { reuseDetectedAt: now },
+        }),
+        this.prisma.refreshSession.updateMany({
+          where: { familyId: session.familyId, revokedAt: null },
+          data: { revokedAt: now, revokedReason: 'REUSE_DETECTED' },
+        }),
+      ]);
+      this.logger.warn(
+        `Refresh token reuse detected (user=${session.userId}, family=${session.familyId})`,
+      );
+    }
+
+    throw new UnauthorizedException('Refresh token revoked');
   }
 
   /**
