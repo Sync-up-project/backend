@@ -31,10 +31,13 @@ ENV NODE_ENV=production \
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+# Prisma 7 은 prisma.config.ts 에서 DB 주소를 읽으므로 migrate deploy 에 필요합니다.
+COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/package-lock.json ./package-lock.json
 
 EXPOSE 3000
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "dist/main"]
+# src 가 루트의 prisma/ 를 import 하므로 tsc 출력이 dist/src/ 아래에 생깁니다.
+CMD ["node", "dist/src/main"]
