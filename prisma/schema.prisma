@@ -880,6 +880,25 @@ model TimeEntry {
   @@index([startAt])
 }
 
+// AI 프로젝트 비동기 생성 작업 상태
+// 무중단(블루-그린) 배포 중 구·신버전 백엔드가 같은 작업 상태를 보도록 DB 에 저장합니다.
+enum AiJobStatus {
+  PENDING
+  DONE
+  ERROR
+}
+
+model AiGenerateJob {
+  id        String      @id
+  status    AiJobStatus @default(PENDING)
+  result    Json?
+  error     Json?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([createdAt])
+}
+
 // AI 산출물(기획서/ERD/API/화면목록 등) 버전 관리
 model AiArtifact {
   id             String        @id @default(cuid())

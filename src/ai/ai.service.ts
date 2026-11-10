@@ -1,7 +1,9 @@
 import {
   BadRequestException,
+  BeforeApplicationShutdown,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
@@ -34,7 +36,7 @@ import {
 } from './utils/clamp-schedule-draft-events';
 
 // ✅ 추가: Prisma enum + JSON 타입
-import { Prisma, AiArtifactType } from '@prisma/client';
+import { Prisma, AiArtifactType, AiJobStatus } from '@prisma/client';
 
 /** 번들 생성에 쓸 OpenAI 모델 (화이트리스트 + env 폴백). 클래스 메서드가 아니라 모듈 함수로 두어 this 바인딩·구 빌드 불일치를 피함 */
 function resolveOpenAiBundleModel(dto: GenerateProjectDto): string {
@@ -64,26 +66,26 @@ function scheduleArtifactSnippet(value: unknown, maxLen: number): string {
 }
 
 @Injectable()
-export class AiService {
+export class AiService implements BeforeApplicationShutdown {
+  private readonly logger = new Logger(AiService.name);
   private readonly provider: AiProvider;
   private readonly cacheEnabled =
     (process.env.AI_CACHE_ENABLED ?? 'true').toLowerCase() !== 'false';
   private readonly cacheTtlMs = Number(process.env.AI_CACHE_TTL_MS ?? 300000);
   private readonly jobTtlMs = Number(process.env.AI_JOB_TTL_MS ?? 1800000);
+  // PENDING 이 이 시간보다 오래되면 실행하던 프로세스가 비정상 종료된 것으로 보고 실패 처리
+  private readonly jobStaleMs = Number(process.env.AI_JOB_STALE_MS ?? 600000);
+  // 종료 신호를 받았을 때 진행 중인 작업을 기다리는 최대 시간 (compose 의 stop_grace_period 보다 짧게)
+  private readonly jobShutdownWaitMs = Number(
+    process.env.AI_JOB_SHUTDOWN_WAIT_MS ?? 150000,
+  );
   private readonly cache = new Map<
     string,
     { expiresAt: number; value: unknown }
   >();
-  private readonly jobs = new Map<
-    string,
-    {
-      status: 'pending' | 'done' | 'error';
-      result?: unknown;
-      error?: { message: string; detail?: unknown };
-      createdAt: number;
-      updatedAt: number;
-    }
-  >();
+  // 작업 상태는 DB(AiGenerateJob)에 저장하고, 여기에는 이 프로세스가 실행 중인 작업만 추적합니다.
+  // 종료 시 이 작업들이 끝날 때까지 기다려 결과를 DB 에 남깁니다. (무중단 배포 대응)
+  private readonly runningJobs = new Map<string, Promise<void>>();
 
   constructor(private readonly prisma: PrismaService) {
     const provider = (process.env.AI_PROVIDER ?? 'mock').toLowerCase();
@@ -284,36 +286,83 @@ export class AiService {
   }
 
   async createGenerateJob(dto: GenerateProjectDto) {
-    this.cleanupJobs();
+    await this.cleanupJobs();
     const jobId = randomUUID();
-    const now = Date.now();
-    this.jobs.set(jobId, {
-      status: 'pending',
-      createdAt: now,
-      updatedAt: now,
+    await this.prisma.aiGenerateJob.create({
+      data: { id: jobId, status: AiJobStatus.PENDING },
     });
 
-    void this.runGenerateJob(jobId, dto);
+    const running = this.runGenerateJob(jobId, dto).finally(() => {
+      this.runningJobs.delete(jobId);
+    });
+    this.runningJobs.set(jobId, running);
 
     return { jobId, status: 'pending' as const };
   }
 
-  getGenerateJob(jobId: string) {
-    this.cleanupJobs();
-    const job = this.jobs.get(jobId);
-    if (!job) {
+  async getGenerateJob(jobId: string) {
+    const job = await this.prisma.aiGenerateJob.findUnique({
+      where: { id: jobId },
+    });
+    if (!job || Date.now() - job.createdAt.getTime() > this.jobTtlMs) {
       throw new NotFoundException({ message: 'Job not found', jobId });
     }
 
-    if (job.status === 'pending') {
+    if (job.status === AiJobStatus.PENDING) {
+      if (Date.now() - job.updatedAt.getTime() > this.jobStaleMs) {
+        return {
+          jobId,
+          status: 'error' as const,
+          error: { message: '작업이 중단되었습니다. 다시 시도해 주세요.' },
+        };
+      }
       return { jobId, status: 'pending' as const };
     }
 
-    if (job.status === 'error') {
+    if (job.status === AiJobStatus.ERROR) {
       return { jobId, status: 'error' as const, error: job.error };
     }
 
     return { jobId, status: 'done' as const, result: job.result };
+  }
+
+  /**
+   * 종료 신호(SIGTERM)를 받으면 HTTP 서버를 닫기 전에 호출됩니다.
+   * 이 프로세스가 실행 중인 생성 작업이 끝나 결과가 DB 에 저장될 때까지 기다리고,
+   * 시간 안에 끝나지 않은 작업은 실패로 기록해 PENDING 으로 남지 않게 합니다.
+   */
+  async beforeApplicationShutdown() {
+    if (this.runningJobs.size === 0) return;
+
+    const ids = [...this.runningJobs.keys()];
+    this.logger.log(`종료 전 진행 중인 AI 작업 ${ids.length}개를 기다립니다.`);
+
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>(resolve => {
+      timer = setTimeout(resolve, this.jobShutdownWaitMs);
+    });
+    await Promise.race([
+      Promise.allSettled([...this.runningJobs.values()]),
+      timeout,
+    ]);
+    if (timer) clearTimeout(timer);
+
+    const unfinished = [...this.runningJobs.keys()];
+    if (unfinished.length === 0) return;
+
+    this.logger.warn(
+      `시간 안에 끝나지 않은 AI 작업 ${unfinished.length}개를 실패로 기록합니다.`,
+    );
+    await this.prisma.aiGenerateJob.updateMany({
+      where: { id: { in: unfinished }, status: AiJobStatus.PENDING },
+      data: {
+        status: AiJobStatus.ERROR,
+        error: {
+          message:
+            '서버가 재시작되어 작업이 중단되었습니다. 다시 시도해 주세요.',
+        },
+      },
+    });
   }
 
   /**
@@ -567,19 +616,33 @@ export class AiService {
   }
 
   private async runGenerateJob(jobId: string, dto: GenerateProjectDto) {
+    let data: Prisma.AiGenerateJobUpdateManyMutationInput;
     try {
       const result = await this.generateProject(dto);
-      const job = this.jobs.get(jobId);
-      if (!job) return;
-      job.status = 'done';
-      job.result = result;
-      job.updatedAt = Date.now();
+      // Date 등을 JSON 으로 정규화 (응답으로 내려가는 모양과 동일하게 저장)
+      data = {
+        status: AiJobStatus.DONE,
+        result: JSON.parse(JSON.stringify(result)) as Prisma.InputJsonValue,
+      };
     } catch (error) {
-      const job = this.jobs.get(jobId);
-      if (!job) return;
-      job.status = 'error';
-      job.error = this.serializeError(error);
-      job.updatedAt = Date.now();
+      data = {
+        status: AiJobStatus.ERROR,
+        error: JSON.parse(
+          JSON.stringify(this.serializeError(error)),
+        ) as Prisma.InputJsonValue,
+      };
+    }
+
+    try {
+      // 정리(cleanup)로 이미 지워졌을 수 있으므로 update 대신 updateMany
+      await this.prisma.aiGenerateJob.updateMany({
+        where: { id: jobId },
+        data,
+      });
+    } catch (error) {
+      this.logger.error(
+        `AI 작업 결과 저장 실패 (jobId=${jobId}): ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -590,13 +653,10 @@ export class AiService {
     return { message: 'Unknown error', detail: error };
   }
 
-  private cleanupJobs() {
-    const now = Date.now();
-    for (const [jobId, job] of this.jobs.entries()) {
-      if (now - job.createdAt > this.jobTtlMs) {
-        this.jobs.delete(jobId);
-      }
-    }
+  private async cleanupJobs() {
+    await this.prisma.aiGenerateJob.deleteMany({
+      where: { createdAt: { lt: new Date(Date.now() - this.jobTtlMs) } },
+    });
   }
 
   async getArtifactById(id: string) {

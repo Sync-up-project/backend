@@ -6,6 +6,9 @@ import * as cookieParser from 'cookie-parser';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // ✅ SIGTERM(docker stop) 시 진행 중인 작업을 정리하고 종료 (무중단 배포 대응)
+  app.enableShutdownHooks();
+
   // ✅ Cookie 파싱 (refresh_token 등 HttpOnly 쿠키 사용을 위해 필요)
   app.use(cookieParser());
 
