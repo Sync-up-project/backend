@@ -2,12 +2,20 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import * as cookieParser from 'cookie-parser';
+import { RedisIoAdapter } from './redis-io.adapter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // ✅ SIGTERM(docker stop) 시 진행 중인 작업을 정리하고 종료 (무중단 배포 대응)
   app.enableShutdownHooks();
+
+  // ✅ 서버 여러 대(ALB 롤링 배포)일 때 채팅 브로드캐스트를 Redis 로 모든 서버에 전달
+  if (process.env.REDIS_URL) {
+    const redisIoAdapter = new RedisIoAdapter(app);
+    await redisIoAdapter.connectToRedis(process.env.REDIS_URL);
+    app.useWebSocketAdapter(redisIoAdapter);
+  }
 
   // ✅ Cookie 파싱 (refresh_token 등 HttpOnly 쿠키 사용을 위해 필요)
   app.use(cookieParser());

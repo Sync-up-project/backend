@@ -101,10 +101,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private connectedUsers = new Map<string, { userId: string; username: string; projectId: string }>();
 
   /**
-   * 프로젝트별 접속자 수 관리
-   * Map<projectId, Set<socketId>> 형태로 각 프로젝트 채팅방의 접속자를 추적합니다.
+   * 프로젝트 채팅방 접속자 수
+   *
+   * 채팅방(room)에 들어와 있는 소켓 수를 셉니다. (room 참여는 join 이벤트에서만 합니다)
+   * Redis 어댑터를 쓰면 다른 서버에 연결된 소켓까지 합쳐서 셉니다. (서버 여러 대 운영 대응)
+   * 다른 서버의 응답이 늦어 조회에 실패하면 null 을 돌려주고, 이번 업데이트는 건너뜁니다.
    */
-  private projectUsers = new Map<string, Set<string>>();
+  private async countRoomUsers(roomName: string): Promise<number | null> {
+    try {
+      const sockets = await this.server.in(roomName).fetchSockets();
+      return sockets.length;
+    } catch (error) {
+      console.error(`Failed to count users in ${roomName}:`, error);
+      return null;
+    }
+  }
 
   /**
    * 생성자
@@ -297,35 +308,28 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
    * 
    * 처리 과정:
    * 1. 연결된 사용자 목록에서 제거
-   * 2. 프로젝트별 접속자 목록에서 제거
-   * 3. 해당 프로젝트 채팅방의 다른 사용자들에게 접속자 수 업데이트
-   * 4. 사용자 퇴장 알림 브로드캐스트
+   * 2. 해당 프로젝트 채팅방의 다른 사용자들에게 접속자 수 업데이트
+   * 3. 사용자 퇴장 알림 브로드캐스트
    */
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     // 연결 해제된 클라이언트의 정보 조회
     const userInfo = this.connectedUsers.get(client.id);
     if (userInfo) {
       const { username, projectId } = userInfo;
-      
+
       // 사용자 목록에서 제거
       this.connectedUsers.delete(client.id);
-      
-      // 프로젝트별 접속자 목록에서 제거
-      const projectUserSet = this.projectUsers.get(projectId);
-      if (projectUserSet) {
-        projectUserSet.delete(client.id);
-        if (projectUserSet.size === 0) {
-          this.projectUsers.delete(projectId);
-        }
-      }
-      
+
       console.log(`User disconnected: ${username} (${client.id}) from project ${projectId}`);
-      
+
       // 해당 프로젝트 채팅방의 다른 사용자들에게만 접속자 수 업데이트
+      // (연결이 끊긴 소켓은 이미 room 에서 빠져 있어 접속자 수에 포함되지 않습니다)
       const roomName = `project:${projectId}`;
-      const userCount = projectUserSet?.size || 0;
-      client.to(roomName).emit('userCount', userCount);
-      
+      const userCount = await this.countRoomUsers(roomName);
+      if (userCount !== null) {
+        client.to(roomName).emit('userCount', userCount);
+      }
+
       // 사용자 퇴장 알림 브로드캐스트 (해당 프로젝트 채팅방에만)
       client.to(roomName).emit('userLeft', username);
     } else {
@@ -407,17 +411,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // 사용자 정보 저장
     this.connectedUsers.set(client.id, { userId, username, projectId });
 
-    // 프로젝트별 접속자 목록에 추가
-    if (!this.projectUsers.has(projectId)) {
-      this.projectUsers.set(projectId, new Set());
-    }
-    this.projectUsers.get(projectId)!.add(client.id);
-
     console.log(`User joined: ${username} (${client.id}) to project ${projectId}`);
 
     // 해당 프로젝트 채팅방의 모든 사용자에게 접속자 수 업데이트
-    const userCount = this.projectUsers.get(projectId)!.size;
-    this.server.to(roomName).emit('userCount', userCount);
+    const userCount = await this.countRoomUsers(roomName);
+    if (userCount !== null) {
+      this.server.to(roomName).emit('userCount', userCount);
+    }
 
     // 사용자 입장 알림 브로드캐스트 (해당 프로젝트 채팅방에만)
     client.to(roomName).emit('userJoined', username);
