@@ -184,13 +184,17 @@ export class AuthController {
         typeof next === 'string' && next.startsWith('/') ? next : '/projects';
 
       const result = await this.authService.loginGithub(req.user as any, req);
+
+      // ✅ 리프레시 토큰은 httpOnly 쿠키로만 전달합니다.
+      // 액세스 토큰은 주소(URL)에 붙이지 않습니다. URL은 브라우저 방문 기록,
+      // 서버 접속 로그 등에 남기 때문입니다. 프론트는 /login?oauth=success 로
+      // 돌아온 뒤, 이 쿠키로 /auth/refresh 를 호출해 액세스 토큰을 받습니다.
       this.authService.setRefreshCookie(res, result.refreshToken);
 
       const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
       const url = new URL(`${frontendBase}/login`);
       url.searchParams.set('oauth', 'success');
       url.searchParams.set('next', safeNext);
-      url.searchParams.set('accessToken', result.accessToken);
 
       res.clearCookie('oauth_next', { path: '/auth/github' });
       return res.redirect(url.toString());
